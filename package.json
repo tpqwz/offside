@@ -1,0 +1,17 @@
+{
+  "name": "offside",
+  "version": "0.1.0-alpha.1",
+  "description": "Alpha. A spaced dialect of C and Pascal. Indent and a colon, both ways, and the host compiler still accepts it.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "offside": "./bin/offside"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/lib/layout/*.test.ts src/cli/offside.test.ts",
+    "start": "node --experimental-strip-types src/cli/offside.ts"
+  }
+}
