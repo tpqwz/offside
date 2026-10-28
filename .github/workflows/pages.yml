@@ -11,7 +11,6 @@ permissions:
   contents: read
   pages: write
   id-token: write
-  administration: write
 
 concurrency:
   group: pages
@@ -37,9 +36,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # The site has to exist before deploy-pages can upload. A user token from
-      # this workspace cannot create it (the app has no Pages permission), so
-      # the Actions token does, once, and a second run just finds it.
+      # Create the site if it does not exist yet. 409 means it already does.
       - name: Enable Pages
         env:
           GH_TOKEN: ${{ github.token }}
