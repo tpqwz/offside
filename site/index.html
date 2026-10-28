@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>offside</title>
+    <meta
+      name="description"
+      content="Alpha. A spaced dialect of C and Pascal. This page runs the converter from the repository source. It does not compile."
+    />
+    <link rel="stylesheet" href="./site.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <p class="kicker">0.1.0-alpha.1 · layout pass, not a compiler</p>
+        <h1>offside</h1>
+      </div>
+      <p class="lede">
+        A colon and a deeper indent stand in for braces, or for <code>begin</code>/<code>end</code> in Pascal.
+        This page is the source in the repository, bundled. It converts. It does not compile.
+      </p>
+      <p class="links">
+        <a href="https://github.com/tpqwz/offside">Source</a>
+        <a href="https://github.com/tpqwz/offside/releases/tag/v0.1.0-alpha.1">Release</a>
+      </p>
+    </header>
+
+    <main>
+      <div class="bar" role="group" aria-label="Direction">
+        <button type="button" data-direction="to-host" aria-pressed="true">Spaced to host</button>
+        <button type="button" data-direction="to-spaced" aria-pressed="false">Host to spaced</button>
+      </div>
+      <div class="bar" id="langs" role="group" aria-label="Language"></div>
+      <div class="bar examples" id="examples" role="group" aria-label="Examples"></div>
+
+      <div class="grid">
+        <section>
+          <div class="pane-head">
+            <h2 id="source-label">Spaced source</h2>
+            <p id="line-count" class="meta"></p>
+          </div>
+          <label class="sr" for="source">Source</label>
+          <textarea id="source" spellcheck="false"></textarea>
+        </section>
+        <section>
+          <div class="pane-head">
+            <h2 id="out-name">out.c</h2>
+            <div class="actions">
+              <button type="button" id="copy">Copy</button>
+              <button type="button" id="save">Save</button>
+            </div>
+          </div>
+          <pre id="output"></pre>
+          <ul id="notes"></ul>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

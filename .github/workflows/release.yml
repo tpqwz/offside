@@ -1,0 +1,97 @@
+# Compile standalone offside binaries and attach them to a GitHub release.
+# The binary is the command. It still calls the host C or Pascal compiler.
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach the binaries to
+        required: true
+        default: v0.1.0-alpha.1
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-linux-x64
+            name: linux-x64
+            bin: offside
+          - target: bun-linux-arm64
+            name: linux-arm64
+            bin: offside
+          - target: bun-darwin-x64
+            name: macos-x64
+            bin: offside
+          - target: bun-darwin-arm64
+            name: macos-arm64
+            bin: offside
+          - target: bun-windows-x64
+            name: windows-x64
+            bin: offside.exe
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p pack
+          bun build src/cli/offside.ts --compile --target "${{ matrix.target }}" --outfile "pack/${{ matrix.bin }}"
+          (cd pack && zip -q "../offside-${{ matrix.name }}.zip" "${{ matrix.bin }}")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offside-${{ matrix.name }}
+          path: offside-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  publish:
+    name: Attach to the release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.release.tag_name }}" ]; then
+            tag="${{ github.event.release.tag_name }}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            tag="${{ inputs.tag }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            echo "no release tag" >&2
+            exit 1
+          fi
+          files=(dist/*/*.zip)
+          if [ "${#files[@]}" -ne 5 ]; then
+            echo "expected 5 packs, found ${#files[@]}" >&2
+            printf '%s\n' "${files[@]}" >&2
+            exit 1
+          fi
+          gh release upload "$tag" "${files[@]}" --clobber

@@ -23,6 +23,24 @@ C, with gcc `-std=gnu2x`:
 
 Java and JavaScript use the same layout engine. They are not the proof.
 
+## Page
+
+[tpqwz.github.io/offside](https://tpqwz.github.io/offside/) is this repository, bundled and published by GitHub Pages on each push to `main`. The page runs the converter in the browser. It does not compile.
+
+## Releases
+
+A published release compiles standalone `offside` binaries and attaches them to that release:
+
+| Pack | Machine |
+| --- | --- |
+| `offside-linux-x64.zip` | Linux x64 |
+| `offside-linux-arm64.zip` | Linux arm64 |
+| `offside-macos-x64.zip` | macOS Intel |
+| `offside-macos-arm64.zip` | macOS Apple silicon |
+| `offside-windows-x64.zip` | Windows x64 |
+
+The binary is the command. It still calls Free Pascal, gcc, clang, or tcc. Those are not in the zip.
+
 ## Use
 
 Node 22 or newer. Nothing to install.

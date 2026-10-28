@@ -1,0 +1,114 @@
+:root {
+  color-scheme: light;
+  --bg: #f3efe6;
+  --ink: #1c1915;
+  --muted: #5c564c;
+  --line: #d9d0c2;
+  --surface: #fbf8f2;
+  --mark: #9a3412;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
+  --serif: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.5 var(--serif);
+}
+
+.top, main { max-width: 72rem; margin: 0 auto; padding: 1.5rem 1rem 0; }
+
+.top { display: grid; gap: 0.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); }
+
+.kicker, .meta, button, code, textarea, pre, h2 {
+  font-family: var(--mono);
+}
+
+.kicker { margin: 0; color: var(--muted); font-size: 0.75rem; letter-spacing: 0.02em; }
+
+h1 { margin: 0; font-weight: 500; font-size: 3rem; line-height: 1; }
+
+.lede { margin: 0; max-width: 40rem; color: var(--muted); }
+
+.links { margin: 0; display: flex; gap: 1rem; }
+
+a { color: var(--mark); }
+
+.bar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.85rem; }
+
+button {
+  height: 2.75rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 0.9rem;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: pointer;
+}
+
+button[aria-pressed="true"] { background: var(--ink); color: var(--surface); box-shadow: none; }
+
+.examples button[aria-pressed="true"] { background: var(--mark); }
+
+.grid { display: grid; gap: 1rem; margin: 1rem 0 2rem; }
+
+@media (min-width: 900px) {
+  .grid { grid-template-columns: 1fr 1fr; }
+}
+
+section {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  min-width: 0;
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+h2 { margin: 0; font-size: 0.85rem; font-weight: 500; }
+
+.meta { margin: 0; color: var(--muted); font-size: 0.75rem; }
+
+.actions { display: flex; gap: 0.4rem; }
+
+textarea, pre {
+  margin: 0;
+  width: 100%;
+  min-height: 24rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  padding: 0.8rem 0.9rem;
+}
+
+textarea { resize: vertical; outline: none; }
+
+pre { overflow: auto; white-space: pre; }
+
+#notes { margin: 0; padding: 0 0.9rem 0.8rem; color: var(--mark); font-size: 0.8rem; }
+
+#notes:empty { display: none; }
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
