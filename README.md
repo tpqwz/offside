@@ -29,7 +29,7 @@ Java and JavaScript use the same layout engine. They are not the proof.
 
 ## Releases
 
-A published release compiles standalone `offside` binaries and attaches them to that release:
+A published release compiles standalone `offside` binaries from [`c/`](c/) and attaches them to that release. That C is written to the SEI CERT C Coding Standard (the rules Robert C. Seacord published for CERT, the same rules behind ISO/IEC TS 17961): bounded copies, no `system()`, no `strcpy`. It is not a Bun runtime with the script attached.
 
 | Pack | Machine |
 | --- | --- |
@@ -39,15 +39,19 @@ A published release compiles standalone `offside` binaries and attaches them to 
 | `offside-macos-arm64.zip` | macOS Apple silicon |
 | `offside-windows-x64.zip` | Windows x64 |
 
-The binary is the command. It still calls Free Pascal, gcc, clang, or tcc. Those are not in the zip.
+The binary is the command. It still calls Free Pascal, gcc, clang, or tcc. Those are not in the zip. A push to `main` also builds the five binaries as Actions artifacts.
+
+The TypeScript converter stays. The page is built from it, and `./bin/offside` still runs on Node 22. The native command is `make -C c`.
 
 ## Use
 
-Node 22 or newer. Nothing to install.
+Node 22 or newer runs the TypeScript command. The native command needs a C11 compiler.
 
 ```bash
 git clone https://github.com/tpqwz/offside.git
 cd offside
+make -C c
+./c/build/offside --version
 ./bin/offside --version
 ```
 

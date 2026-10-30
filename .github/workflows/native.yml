@@ -1,0 +1,68 @@
+# Build the CERT C command on every push. Artifacts only; a release attaches them.
+name: Native
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-latest
+            cc: gcc
+            bin: offside
+            smoke: true
+          - name: linux-arm64
+            os: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
+            packages: gcc-aarch64-linux-gnu
+            bin: offside
+          - name: macos-x64
+            os: macos-latest
+            cc: clang
+            cflags: -arch x86_64
+            bin: offside
+          - name: macos-arm64
+            os: macos-latest
+            cc: clang
+            bin: offside
+            smoke: true
+          - name: windows-x64
+            os: ubuntu-latest
+            cc: x86_64-w64-mingw32-gcc
+            packages: gcc-mingw-w64
+            bin: offside.exe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cross compiler
+        if: matrix.packages != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
+      - name: Compile
+        shell: bash
+        env:
+          CC: ${{ matrix.cc }}
+          CFLAGS: ${{ matrix.cflags }}
+        run: |
+          set -euo pipefail
+          make -C c
+          if [ "${{ matrix.smoke }}" = "true" ]; then
+            "./c/build/${{ matrix.bin }}" --version
+          fi
+          mkdir -p pack
+          cp "c/build/${{ matrix.bin }}" "pack/${{ matrix.bin }}"
+          (cd pack && zip -q "../offside-${{ matrix.name }}.zip" "${{ matrix.bin }}")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offside-${{ matrix.name }}
+          path: offside-${{ matrix.name }}.zip
+          if-no-files-found: error
