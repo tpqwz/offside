@@ -139,8 +139,12 @@ interface Frame {
   headerIndent: number;
   bodyIndent: number;
   semiOnClose: boolean;
+  /** Zig: the closing brace also ends a const, var, return, or assignment. */
+  valueSemi: boolean;
+  /** Zig: this block is a switch prong, so it closes with `},`. */
+  commaChild: boolean;
   name: string;
-  kind: "enum" | "struct" | "union" | "block";
+  kind: "enum" | "struct" | "union" | "block" | "opaque" | "error" | "switch";
   wantsTail: boolean;
   line: number;
   opener: "{" | "begin" | "none";
@@ -278,7 +282,7 @@ function aggregateInfo(tokens: Tok[]): { kind: Frame["kind"]; wantsTail: boolean
     const text = tokens[i]?.text;
     if (text === "(") paren++;
     else if (text === ")" && paren > 0) paren--;
-    else if (paren === 0 && (text === "enum" || text === "struct" || text === "union")) {
+    else if (paren === 0 && tokens[i]?.kind === "keyword" && (text === "enum" || text === "struct" || text === "union" || text === "opaque" || text === "error")) {
       kind = text;
       kw = i;
       break;
@@ -301,8 +305,9 @@ const HEADER_KEYWORDS = new Set([
   "else", "do", "struct", "union", "enum", "class", "interface", "record", "try", "finally",
 ]);
 
-function opensBlock(code: Tok[], blockColon: boolean, labelColon: boolean): boolean {
+function opensBlock(code: Tok[], blockColon: boolean, labelColon: boolean, lang: LangId): boolean {
   if (!blockColon) return false;
+  if (lang === "zig") return true;
   const first = code[0];
   if (first && (first.text === "case" || first.text === "default")) return false;
   if (code.length === 2 && code[0]?.kind === "ident" && code[1]?.text === ":") return false;
@@ -422,8 +427,13 @@ interface LayoutState {
   braceParen: number[];
 }
 
-function braceKindAt(code: Tok[], index: number, hangText: string): BraceKind {
+function braceKindAt(code: Tok[], index: number, hangText: string, lang: LangId): BraceKind {
   const prev = code[index - 1];
+  if (lang === "zig") {
+    if (!prev) return "stmt";
+    if (prev.text === "=" || prev.text === "," || prev.text === "{" || prev.text === "." || prev.kind === "ident") return "init";
+    return "stmt";
+  }
   if (!prev) return hangText === "=" || hangText === "," ? "init" : "stmt";
   if (prev.text === "=" || prev.text === "," || prev.text === "{") return "init";
   if (prev.text === "(") return "stmt";
@@ -467,7 +477,7 @@ function atStatementLevel(braces: BraceKind[], braceParen: number[], paren: numb
   return paren === 0;
 }
 
-function classify(line: LogicalLine, state: LayoutState, hangText: string, labelColon: boolean): Classified {
+function classify(line: LogicalLine, state: LayoutState, hangText: string, labelColon: boolean, lang: LangId): Classified {
   let { ternary, paren, bracket } = state;
   const braces = state.braces.slice();
   const braceParen = state.braceParen.slice();
@@ -482,7 +492,7 @@ function classify(line: LogicalLine, state: LayoutState, hangText: string, label
     else if (t.text === "[") bracket++;
     else if (t.text === "]" && bracket > 0) bracket--;
     else if (t.text === "{") {
-      let kind = braceKindAt(code, n, hangText);
+      let kind = braceKindAt(code, n, hangText, lang);
       if (n === 0 && braces.at(-1) === "init") kind = "init";
       braces.push(kind);
       braceParen.push(paren);
@@ -490,14 +500,14 @@ function classify(line: LogicalLine, state: LayoutState, hangText: string, label
       const kind = braces.pop();
       braceParen.pop();
       if (kind === "init" && braces.at(-1) !== "init") closedInit = true;
-    } else if (t.text === "?") ternary++;
+    } else if (t.text === "?" && lang !== "zig") ternary++;
     else if (t.text === ":") {
       const isLast = n === code.length - 1;
       if (ternary > 0) ternary--;
       else if (isLast && atStatementLevel(braces, braceParen, paren, bracket)) blockColon = true;
     }
   }
-  const opens = opensBlock(code, blockColon, labelColon);
+  const opens = opensBlock(code, blockColon, labelColon, lang);
   const last = code[code.length - 1];
   const hanging = !opens && !!last && (HANGING.has(last.text) || ternary > 0);
   return { opens, hanging, ternary, paren, bracket, braces, braceParen, closedInit };
@@ -508,6 +518,103 @@ function effectiveParen(paren: number, braces: BraceKind[], braceParen: number[]
     if (braces[i] === "stmt") return Math.max(0, paren - (braceParen[i] ?? 0));
   }
   return paren;
+}
+
+function zigKeepsColon(code: Tok[]): boolean {
+  if (code.at(-1)?.text !== ":") return false;
+  const name = code.at(-2);
+  if (!name || name.kind !== "ident") return false;
+  const before = code.at(-3);
+  if (!before) return true;
+  if (before.text === "=" || before.text === "=>" || before.text === "|") return true;
+  return (
+    before.kind === "keyword" &&
+    ["return", "orelse", "else", "catch", "and", "or", "defer", "errdefer"].includes(before.text)
+  );
+}
+
+/** A container line takes a comma unless it is a declaration (`fn`, `const`, `var`). */
+function zigContainerLine(code: Tok[]): boolean {
+  let i = 0;
+  if (code[i]?.text === "pub" || code[i]?.text === "export") i++;
+  if (code[i]?.text === "pub" || code[i]?.text === "export") i++;
+  const head = code[i];
+  if (head?.kind === "keyword" && ["fn", "const", "var", "test", "usingnamespace", "comptime"].includes(head.text)) return false;
+  return code.length > 0;
+}
+
+function zigSwitch(code: Tok[]): boolean {
+  let paren = 0;
+  for (const tok of code) {
+    if (tok.text === "(") paren++;
+    else if (tok.text === ")" && paren > 0) paren--;
+    else if (paren === 0 && tok.kind === "keyword" && tok.text === "switch") return true;
+  }
+  return false;
+}
+
+const ZIG_CONTAINERS = new Set(["struct", "enum", "union", "opaque", "error"]);
+
+/** `error{E}!T` and `struct { x: i32 }` inside a signature are types, not the block being opened. */
+function zigInlineContainer(code: Tok[]): boolean {
+  for (let i = 0; i < code.length; i++) {
+    const tok = code[i];
+    if (!tok || tok.kind !== "keyword" || !ZIG_CONTAINERS.has(tok.text)) continue;
+    let paren = 0;
+    for (let j = i + 1; j < code.length; j++) {
+      const next = code[j];
+      if (!next || next.text === ":") break;
+      if (next.text === "(") paren++;
+      else if (next.text === ")" && paren > 0) paren--;
+      else if (next.text === "{" && paren === 0) return true;
+    }
+  }
+  return false;
+}
+
+function zigHasFn(code: Tok[]): boolean {
+  let paren = 0;
+  for (const tok of code) {
+    if (tok.text === "(") paren++;
+    else if (tok.text === ")" && paren > 0) paren--;
+    else if (paren === 0 && tok.kind === "keyword" && (tok.text === "fn" || tok.text === "test")) return true;
+  }
+  return false;
+}
+
+/** `union(enum)` is a container. A following `(` otherwise means the keyword is a type in a signature. */
+function zigTaggedUnion(code: Tok[]): boolean {
+  let paren = 0;
+  for (let i = 0; i < code.length; i++) {
+    const tok = code[i];
+    if (!tok) continue;
+    if (tok.text === "(") paren++;
+    else if (tok.text === ")" && paren > 0) paren--;
+    else if (paren === 0 && tok.kind === "keyword" && tok.text === "union" && code[i + 1]?.text === "(") return true;
+  }
+  return false;
+}
+
+/** A Zig block whose brace is the end of a declaration, return, or catch takes a semicolon. */
+function zigValueSemi(code: Tok[]): boolean {
+  let paren = 0;
+  let sawEq = false;
+  let sawReturn = false;
+  let sawDecl = false;
+  let sawCatch = false;
+  for (const tok of code) {
+    if (tok.text === "(") paren++;
+    else if (tok.text === ")" && paren > 0) paren--;
+    else if (paren === 0) {
+      if (tok.text === "=") sawEq = true;
+      if (tok.text === "return") sawReturn = true;
+      if (tok.text === "const" || tok.text === "var") sawDecl = true;
+      if (tok.text === "catch" || tok.text === "orelse") sawCatch = true;
+    }
+  }
+  if (sawReturn || sawCatch) return true;
+  if (sawEq && (sawDecl || !sawReturn)) return true;
+  return false;
 }
 
 function terminatorOf(
@@ -536,7 +643,7 @@ function terminatorOf(
 
 function renderLine(
   line: LogicalLine,
-  colon: "keep" | "brace" | "drop" | "semi" | "begin" | "arm",
+  colon: "keep" | "brace" | "drop" | "semi" | "begin" | "arm" | "zlabel",
   terminator: string,
   skipLead = false,
 ): OutSegment[] {
@@ -562,6 +669,9 @@ function renderLine(
       const prev = segments[segments.length - 1]?.text ?? "";
       if (prev.length > 0 && !/\s$/.test(prev)) push(" ", true);
       push("{", true);
+    } else if (colonHere && colon === "zlabel") {
+      push(":", false);
+      push(" {", true);
     } else if (colonHere && colon === "begin") {
       push(" begin", true);
     } else if (colonHere && colon === "arm") {
@@ -848,6 +958,7 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
   let hangIndent = 1;
   let hangText = "";
   let expectWhile = false;
+  let carryValueSemi = false;
   const held: LogicalLine[] = [];
 
   function closeEmptyPending(frame: Frame, sourceLine: number, tail: string | null, attaches: boolean): void {
@@ -888,7 +999,7 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
     const pad = " ".repeat(Math.max(0, frame.headerIndent - 1));
     const brace = frame.closer === "end"
       ? (frame.dot ? "end." : tail ? `end ${tail};` : withSemi ? "end;" : "end")
-      : tail ? (openDecl ? `} ${tail}` : `} ${tail};`) : frame.semiOnClose ? "};" : "}";
+      : tail ? (openDecl ? `} ${tail}` : `} ${tail};`) : frame.commaChild ? "}," : (frame.semiOnClose || frame.valueSemi) ? "};" : "}";
     out.push({ segments: [{ text: pad + brace, inserted: true }], sourceLine });
     events.push({
       line: sourceLine,
@@ -927,6 +1038,10 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
   }
 
   function closeStatement(frame: Frame, sourceLine: number, bucket: LogicalLine[], attaches: boolean): void {
+    if (attaches && frame.valueSemi) {
+      frame.valueSemi = false;
+      carryValueSemi = true;
+    }
     // Only a statement frame. A routine's `end;` has to stay inside the conditional
     // that wraps the whole routine (`function Pick; begin ... end; {$ENDIF}`).
     // A case-else's semicolon has to stay inside too: after `{$ENDIF}` it is a stray
@@ -1300,8 +1415,14 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       }
     }
 
+    const indentNow = indentOf(line);
+    const openFrame = pending ?? stack.at(-1) ?? null;
+    const outdented =
+      openFrame !== null &&
+      indentNow <= openFrame.headerIndent &&
+      !(openFrame.wantsTail && indentNow === openFrame.headerIndent && isDeclaratorTail(line));
     const suppressed =
-      hanging ||
+      (hanging && !outdented) ||
       effectiveParen(state.paren, state.braces, state.braceParen) > 0 ||
       state.bracket > 0 ||
       state.braces.at(-1) === "init";
@@ -1436,7 +1557,8 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       glueWord &&
       attaches &&
       !directiveBetween &&
-      held.every((line) => lineKind(line) !== "code");
+      held.every((line) => lineKind(line) !== "code") &&
+      !(profile.id === "zig" && stack.at(-1)?.kind === "switch" && headWord === "else");
     let prefix: OutSegment[] | null = null;
     if (
       !glue &&
@@ -1560,7 +1682,7 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       flushHeld();
     }
 
-    const next = classify(line, state, hangText, isLabelColon(index, line));
+    const next = classify(line, state, hangText, isLabelColon(index, line), profile.id);
     const ahead = nextCode(index);
     const aheadCode = ahead ? codeTokens(ahead) : [];
     const aheadIndex = ahead ? logical.indexOf(ahead) : -1;
@@ -1576,7 +1698,15 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
         headText === "case" ||
         headText === "default");
     const joinString = code.at(-1)?.kind === "string" && aheadCode[0]?.kind === "string";
-    const inEnum = stack.at(-1)?.kind === "enum" && next.braces.at(-1) !== "init";
+    const topKind = stack.at(-1)?.kind;
+    const zigContainer =
+      profile.id === "zig" &&
+      (topKind === "enum" || topKind === "error" || topKind === "struct" || topKind === "union" || topKind === "opaque");
+    const inEnum =
+      (topKind === "switch" ||
+        (profile.id !== "zig" && (topKind === "enum" || topKind === "error")) ||
+        (zigContainer && zigContainerLine(code))) &&
+      next.braces.at(-1) !== "init";
     const indentedStar =
       (aheadCode[0]?.text === "*" || aheadCode[0]?.text === "&") && (aheadCode[0]?.col ?? 0) > indentOf(line);
     const cont =
@@ -1621,7 +1751,10 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       };
     }
     let opens = next.opens;
-    let colon: "keep" | "brace" | "drop" | "semi" | "begin" | "arm" = opens ? "brace" : "keep";
+    let colon: "keep" | "brace" | "drop" | "semi" | "begin" | "arm" | "zlabel" = opens ? "brace" : "keep";
+    if (profile.id === "zig" && opens && zigKeepsColon(code)) {
+      colon = "zlabel";
+    }
     if (doWhile) {
       opens = false;
       colon = code.at(-1)?.text === ":" ? "drop" : "keep";
@@ -1687,8 +1820,18 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       if (tail?.text === ";") term = "";
     }
 
-    const rendered = renderLine(line, colon, term, prefix !== null);
+    const zigMulti =
+      profile.id === "zig" &&
+      term === ";" &&
+      code.length === 1 &&
+      code[0]?.kind === "string" &&
+      code[0].text.startsWith("\\\\");
+    const rendered = renderLine(line, colon, zigMulti ? "" : term, prefix !== null);
     out.push(...explode(prefix ? [...prefix, ...rendered] : rendered, line.no));
+    if (zigMulti) {
+      const pad = " ".repeat(Math.max(0, statementStartIndent(index, line) - 1));
+      out.push({ segments: [{ text: `${pad};`, inserted: true }], sourceLine: line.no });
+    }
     if (profile.id === "pascal") {
       const last = out.at(-1);
       const joined = last ? textOf(last) : "";
@@ -1708,12 +1851,22 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
     if (opens) {
       const tokens = styleSource;
       const info = aggregateInfo(code);
+      if (profile.id === "zig") {
+        info.wantsTail = false;
+        if (zigInlineContainer(code)) info.kind = "block";
+        else if (info.kind === "block" && zigTaggedUnion(code) && !zigHasFn(code)) info.kind = "union";
+        if (zigSwitch(code)) info.kind = "switch";
+      }
       const pwords = profile.id === "pascal" ? pascalWords(code) : [];
       const openedName = pwords.includes("case") && pwords[pwords.length - 1] === "of" ? "case" : headerName(tokens);
+      const inherited = headWord === "else" && carryValueSemi;
+      if (headWord === "else") carryValueSemi = false;
       pending = {
         headerIndent: statementStartIndent(index, line),
         bodyIndent: indentOf(line),
         semiOnClose: semiOnClose(tokens, profile),
+        valueSemi: profile.id === "zig" && (zigValueSemi(code) || inherited),
+        commaChild: profile.id === "zig" && stack.at(-1)?.kind === "switch",
         name: openedName,
         kind: info.kind,
         wantsTail: info.wantsTail,
@@ -1732,7 +1885,7 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       };
       events.push({
         line: line.no,
-        message: pending.semiOnClose ? `Opened ${pending.name}, will close with };` : `Opened ${pending.name}`,
+        message: pending.semiOnClose || pending.valueSemi ? `Opened ${pending.name}, will close with };` : `Opened ${pending.name}`,
       });
     }
     state = {

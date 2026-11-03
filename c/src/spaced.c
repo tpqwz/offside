@@ -58,6 +58,7 @@ struct Node {
   Str follow;
   ColonWhere where;
   bool has_lead;
+  bool nest;
   NodeVec lead;
   NodeVec kids;
 };
@@ -439,6 +440,12 @@ static Node *node_new(Arena *arena, NodeKind kind) {
 static Node *node_text(Arena *arena, Str text) {
   Node *n = node_new(arena, NK_TEXT);
   n->text = text;
+  return n;
+}
+
+static Node *node_text_nest(Arena *arena, Str text) {
+  Node *n = node_text(arena, text);
+  n->nest = true;
   return n;
 }
 
@@ -1361,8 +1368,171 @@ static bool looks_like_aggregate(const Converter *cv, int brace) {
   return false;
 }
 
-static BraceRole brace_role(Converter *cv, int index) {
+static bool saw_keyword(const Converter *cv, int brace, const char *word) {
+  int paren = 0;
+  int bracket = 0;
+  int nest = 0;
+  int k;
+  for (k = brace - 1; k >= 0; k--) {
+    const Tok *tok = code_at(cv, k);
+    if (tok == NULL) {
+      continue;
+    }
+    if (tok_is(tok, ")")) {
+      paren++;
+    } else if (tok_is(tok, "(")) {
+      if (paren == 0) {
+        return false;
+      }
+      paren--;
+    } else if (tok_is(tok, "}")) {
+      nest++;
+    } else if (tok_is(tok, "{")) {
+      if (nest == 0) {
+        return false;
+      }
+      nest--;
+    } else if (tok_is(tok, "]")) {
+      bracket++;
+    } else if (tok_is(tok, "[")) {
+      if (bracket == 0) {
+        return false;
+      }
+      bracket--;
+    } else if (paren == 0 && bracket == 0 && nest == 0 && tok_is(tok, ";")) {
+      return false;
+    } else if (paren == 0 && bracket == 0 && nest == 0 && tok->kind == TOK_KEYWORD && tok_is(tok, word)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool container_brace_is_inline(Converter *cv, int brace) {
+  int close = match_tok(cv, brace, "{", "}");
+  const Tok *next;
+  if (close < 0) {
+    return false;
+  }
+  next = code_at(cv, close + 1);
+  if (next == NULL) {
+    return false;
+  }
+  return !tok_is(next, ";") && !tok_is(next, ",");
+}
+
+static bool zig_comma_ends(const Converter *cv, int comma) {
+  const Tok *here = code_at(cv, comma);
+  int paren = 0;
+  int bracket = 0;
+  int k;
+  if (here == NULL) {
+    return true;
+  }
+  for (k = comma + 1; k < cv->ncode; k++) {
+    const Tok *tok = code_at(cv, k);
+    if (tok == NULL || tok->line != here->line) {
+      return true;
+    }
+    if (tok_is(tok, "(")) {
+      paren++;
+    } else if (tok_is(tok, ")")) {
+      if (paren == 0) {
+        return true;
+      }
+      paren--;
+    } else if (tok_is(tok, "[")) {
+      bracket++;
+    } else if (tok_is(tok, "]")) {
+      if (bracket == 0) {
+        return true;
+      }
+      bracket--;
+    } else if (paren == 0 && bracket == 0 && tok_is(tok, "=>")) {
+      return false;
+    } else if (paren == 0 && bracket == 0 && (tok_is(tok, ";") || tok_is(tok, "{") || tok_is(tok, "}"))) {
+      return true;
+    }
+  }
+  return true;
+}
+
+static bool list_body(const Converter *cv, int brace, int close) {
+  int paren = 0;
+  int bracket = 0;
+  int nest = 0;
+  int k;
+  for (k = brace + 1; k < close; k++) {
+    const Tok *tok = code_at(cv, k);
+    if (tok == NULL) {
+      continue;
+    }
+    if (tok_is(tok, "(")) {
+      paren++;
+    } else if (tok_is(tok, ")") && paren > 0) {
+      paren--;
+    } else if (tok_is(tok, "[")) {
+      bracket++;
+    } else if (tok_is(tok, "]") && bracket > 0) {
+      bracket--;
+    } else if (tok_is(tok, "{")) {
+      if (paren == 0 && bracket == 0 && nest == 0) {
+        return false;
+      }
+      nest++;
+    } else if (tok_is(tok, "}") && nest > 0) {
+      nest--;
+    } else if (paren == 0 && bracket == 0 && nest == 0 && tok->kind == TOK_KEYWORD && tok_is(tok, "fn")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static BraceRole zig_brace(const Converter *cv, int index) {
   const Tok *prev = code_at(cv, index - 1);
+  if (prev == NULL) {
+    return ROLE_KEEP;
+  }
+  if (tok_is(prev, "=") || tok_is(prev, ",") || tok_is(prev, "{") || tok_is(prev, ".")) {
+    return ROLE_INIT;
+  }
+  if (tok_is(prev, "=>") || tok_is(prev, "|") || tok_is(prev, ")")) {
+    return ROLE_COLON;
+  }
+  if (tok_is(prev, ":") && code_at(cv, index - 2) != NULL && code_at(cv, index - 2)->kind == TOK_IDENT) {
+    return ROLE_COLON;
+  }
+  if (tok_is(prev, "}") && (saw_keyword(cv, index, "fn") || saw_keyword(cv, index, "test"))) {
+    return ROLE_COLON;
+  }
+  if (tok_is(prev, "else") || tok_is(prev, "orelse") || tok_is(prev, "catch") || tok_is(prev, "struct")
+      || tok_is(prev, "enum") || tok_is(prev, "union") || tok_is(prev, "opaque") || tok_is(prev, "error")
+      || tok_is(prev, "comptime") || tok_is(prev, "defer") || tok_is(prev, "errdefer")) {
+    if ((tok_is(prev, "struct") || tok_is(prev, "enum") || tok_is(prev, "union") || tok_is(prev, "opaque") || tok_is(prev, "error"))
+        && container_brace_is_inline((Converter *)cv, index)) {
+      return ROLE_KEEP;
+    }
+    return ROLE_COLON;
+  }
+  if (prev->kind == TOK_STRING) {
+    return ROLE_COLON;
+  }
+  if (prev->kind == TOK_IDENT || prev->kind == TOK_KEYWORD) {
+    if (saw_keyword(cv, index, "fn") || saw_keyword(cv, index, "test")) {
+      return ROLE_COLON;
+    }
+    return ROLE_INIT;
+  }
+  return ROLE_KEEP;
+}
+
+static BraceRole brace_role(Converter *cv, int index) {
+  const Tok *prev;
+  if (cv->lang == LANG_ZIG) {
+    return zig_brace(cv, index);
+  }
+  prev = code_at(cv, index - 1);
   if (prev == NULL) {
     return ROLE_KEEP;
   }
@@ -1585,7 +1755,13 @@ static Str last_line(Str s) {
 }
 
 static ColonWhere colon_where(const Converter *cv, int brace, Str header) {
-  const Tok *prev = code_at(cv, brace - 1);
+  const Tok *prev;
+  if (cv->lang == LANG_ZIG) {
+    (void)header;
+    (void)brace;
+    return WHERE_INLINE;
+  }
+  prev = code_at(cv, brace - 1);
   if (prev != NULL && (tok_is(prev, ")") || tok_is(prev, "=>"))) {
     return WHERE_INLINE;
   }
@@ -1595,6 +1771,9 @@ static ColonWhere colon_where(const Converter *cv, int brace, Str header) {
 static bool is_label(const Converter *cv, int i) {
   const Tok *tok = code_at(cv, i);
   const Tok *colon = code_at(cv, i + 1);
+  if (cv->lang == LANG_ZIG) {
+    return false;
+  }
   return tok != NULL && tok->kind == TOK_IDENT && tok_is(colon, ":");
 }
 
@@ -1798,7 +1977,7 @@ static NodeVec mix_nodes(Converter *cv, const MixVec *items) {
     return nodes;
   }
   if (items->len == 1 && !items->items[0].sexpr) {
-    nodevec_push(cv->arena, &nodes, node_text(cv->arena, items->items[0].text));
+    nodevec_push(cv->arena, &nodes, node_text_nest(cv->arena, items->items[0].text));
     return nodes;
   }
   for (n = 0; n < items->len; n++) {
@@ -1812,7 +1991,7 @@ static NodeVec mix_nodes(Converter *cv, const MixVec *items) {
         nodes.items[nodes.len - 1u]->suffix = str_trim(item->text);
         prefix = str_empty();
       } else {
-        nodevec_push(cv->arena, &nodes, node_text(cv->arena, item->text));
+        nodevec_push(cv->arena, &nodes, node_text_nest(cv->arena, item->text));
       }
     } else {
       Node *sx = node_new(cv->arena, NK_SEXPR);
@@ -2290,7 +2469,7 @@ static Parsed parse_open_brace(Converter *cv, int i) {
     int semi = scan_semi(cv, close + 1);
     int to = semi < 0 ? close : semi;
     int next = semi < 0 ? close + 1 : semi + 1;
-    p.node = node_text(cv->arena, strip_semis(cv, i, to));
+    p.node = node_text_nest(cv->arena, strip_semis(cv, i, to));
     p.next = next;
     p.end = offset_after(cv, next);
     return p;
@@ -2323,7 +2502,22 @@ static Parsed finish_colon(Converter *cv, int start, int brace) {
   }
   {
     Str header = header_text(cv, start, brace);
-    bool is_enum = has_keyword(cv, start, brace, "enum");
+    const Tok *prev_brace = code_at(cv, brace - 1);
+    bool is_enum = has_keyword(cv, start, brace, "enum")
+      || (cv->lang == LANG_ZIG && prev_brace != NULL && tok_is(prev_brace, "error"));
+    if (cv->lang == LANG_ZIG && header.n > 0) {
+      size_t n = header.n;
+      while (n > 0 && (header.s[n - 1u] == ' ' || header.s[n - 1u] == '\t')) {
+        n--;
+      }
+      if (n > 0 && header.s[n - 1u] == ':') {
+        n--;
+        while (n > 0 && (header.s[n - 1u] == ' ' || header.s[n - 1u] == '\t')) {
+          n--;
+        }
+        header = str_make(header.s, n);
+      }
+    }
     NodeVec lead = lead_in(cv, brace);
     NodeVec body;
     int next = close + 1;
@@ -2332,7 +2526,10 @@ static Parsed finish_colon(Converter *cv, int start, int brace) {
     ColonWhere where;
     Node *node;
     memset(&body, 0, sizeof body);
-    if (is_enum) {
+    if (cv->lang == LANG_ZIG && tok_is(code_at(cv, next), ",")) {
+      next++;
+    }
+    if (is_enum && list_body(cv, brace, close)) {
       NodeVec items = enum_items(cv, brace, close);
       body = vec_concat(cv->arena, &lead, &items);
     } else {
@@ -2369,6 +2566,7 @@ static Parsed parse_general(Converter *cv, int i) {
   int bracket = 0;
   bool saw_eq = false;
   int fn_close = -1;
+  bool in_payload = false;
   MixVec items;
   int chunk = i;
   Parsed p;
@@ -2384,9 +2582,19 @@ static Parsed parse_general(Converter *cv, int i) {
     if ((tok_is(tok, "case") || tok_is(tok, "default")) && paren == 0 && bracket == 0 && j > i) {
       break;
     }
-    if (j > i && paren == 0 && bracket == 0
+    if (cv->lang != LANG_ZIG && j > i && paren == 0 && bracket == 0
         && (is_control_tok(tok) || tok_is(tok, "else") || tok_is(tok, "do") || tok_is(tok, "try") || tok_is(tok, "finally"))) {
       break;
+    }
+    if (tok_is(tok, "|")) {
+      if (in_payload) {
+        in_payload = false;
+      } else {
+        const Tok *before = code_at(cv, j - 1);
+        if (before != NULL && (tok_is(before, ")") || tok_is(before, "catch") || tok_is(before, "else"))) {
+          in_payload = true;
+        }
+      }
     }
     if (cv->lang == LANG_C && tok_is(tok, "{") && j > 0 && tok_is(code_at(cv, j - 1), "(")) {
       const Tok *open = tok;
@@ -2442,7 +2650,7 @@ static Parsed parse_general(Converter *cv, int i) {
       saw_eq = true;
     } else if (tok_is(tok, "{") && paren == 0 && bracket == 0) {
       BraceRole role = brace_role(cv, j);
-      bool kr = !saw_eq && fn_close >= 0 && j > fn_close + 1 && kr_body(cv, fn_close, j);
+      bool kr = cv->lang != LANG_ZIG && !saw_eq && fn_close >= 0 && j > fn_close + 1 && kr_body(cv, fn_close, j);
       if (role == ROLE_COLON || kr) {
         Parsed colon;
         if (items.len == 0) {
@@ -2473,6 +2681,14 @@ static Parsed parse_general(Converter *cv, int i) {
         j = close + 1;
         continue;
       }
+    } else if (cv->lang == LANG_ZIG && tok_is(tok, ",") && paren == 0 && bracket == 0 && !in_payload && zig_comma_ends(cv, j)) {
+      NodeVec mixed;
+      push_text_item(cv, &items, chunk, j);
+      mixed = mix_nodes(cv, &items);
+      p.node = unwrap_nodes(cv, mixed);
+      p.next = j + 1;
+      p.end = offset_after(cv, j + 1);
+      return p;
     } else if (tok_is(tok, ";") && paren == 0 && bracket == 0) {
       NodeVec mixed;
       if (!saw_eq && fn_close >= 0 && j > fn_close + 1 && kr_decl(cv, fn_close, j) && kr_continues(cv, j)) {
@@ -2526,15 +2742,24 @@ static Parsed parse_stmt(Converter *cv, int i) {
     return parse_label(cv, i);
   }
   if (is_control_tok(tok)) {
+    if (cv->lang == LANG_ZIG) {
+      return parse_general(cv, i);
+    }
     return parse_control(cv, i);
   }
   if (tok_is(tok, "do")) {
     return parse_do(cv, i);
   }
   if (tok_is(tok, "try")) {
+    if (cv->lang == LANG_ZIG) {
+      return parse_general(cv, i);
+    }
     return parse_try(cv, i);
   }
   if (tok_is(tok, "else")) {
+    if (cv->lang == LANG_ZIG && tok_is(code_at(cv, i + 1), "=>")) {
+      return parse_general(cv, i);
+    }
     return parse_else(cv, i);
   }
   if (tok_is(tok, "finally")) {
@@ -2610,7 +2835,7 @@ static Str make_indent_line(Arena *arena, size_t nspaces, Str rest) {
   return r;
 }
 
-static void reindent(Arena *arena, Str text, int indent, bool anchor_first, StrVec *out) {
+static void reindent(Arena *arena, Str text, int indent, bool anchor_first, bool nest, StrVec *out) {
   Str cleaned;
   size_t b;
   size_t n;
@@ -2630,6 +2855,80 @@ static void reindent(Arena *arena, Str text, int indent, bool anchor_first, StrV
   cleaned = str_make(cleaned.n == 0 ? "" : cleaned.s + b, n - b);
   if (str_trim(cleaned).n == 0) {
     return;
+  }
+  {
+    bool zig_ml = false;
+    bool first = true;
+    size_t first_w = 0;
+    size_t rest_min = 0;
+    bool have_rest = false;
+    size_t scan = 0;
+    while (scan < cleaned.n) {
+      size_t start = scan;
+      size_t len;
+      size_t w;
+      size_t c;
+      while (scan < cleaned.n && cleaned.s[scan] != '\n') {
+        scan++;
+      }
+      len = scan - start;
+      w = leading_spaces(cleaned.s + start, len);
+      c = w;
+      if (!line_blank(cleaned.s + start, len)) {
+        if (c + 1u < len && cleaned.s[start + c] == '\\' && cleaned.s[start + c + 1u] == '\\') {
+          zig_ml = true;
+        }
+        if (first) {
+          first_w = w;
+          first = false;
+        } else if (!have_rest || w < rest_min) {
+          rest_min = w;
+          have_rest = true;
+        }
+      }
+      if (scan < cleaned.n && cleaned.s[scan] == '\n') {
+        scan++;
+      }
+    }
+    if (zig_ml && first_w == 0 && have_rest) {
+      size_t line_i = 0;
+      bool content = false;
+      scan = 0;
+      while (scan < cleaned.n) {
+        size_t start = scan;
+        size_t len;
+        while (scan < cleaned.n && cleaned.s[scan] != '\n') {
+          scan++;
+        }
+        len = scan - start;
+        if (line_blank(cleaned.s + start, len)) {
+          strvec_push(arena, out, str_empty());
+        } else {
+          size_t w = leading_spaces(cleaned.s + start, len);
+          size_t c = 0;
+          size_t total;
+          Str rest;
+          while (c < len && rt_is_space(cleaned.s[start + c])) {
+            c++;
+          }
+          if (!content) {
+            total = (size_t)ind;
+            content = true;
+          } else {
+            size_t extra = w > rest_min ? w - rest_min : 0;
+            total = (size_t)ind + 4u + extra;
+          }
+          rest = str_make(cleaned.s + start + c, len - c);
+          strvec_push(arena, out, make_indent_line(arena, total, rest));
+          (void)line_i;
+        }
+        if (scan < cleaned.n && cleaned.s[scan] == '\n') {
+          scan++;
+        }
+        line_i++;
+      }
+      return;
+    }
   }
   i = 0;
   while (i < cleaned.n) {
@@ -2653,33 +2952,42 @@ static void reindent(Arena *arena, Str text, int indent, bool anchor_first, StrV
     }
   }
   i = 0;
-  while (i < cleaned.n) {
-    size_t start = i;
-    size_t len;
-    while (i < cleaned.n && cleaned.s[i] != '\n') {
-      i++;
-    }
-    len = i - start;
-    if (line_blank(cleaned.s + start, len)) {
-      strvec_push(arena, out, str_empty());
-    } else {
-      size_t w = leading_spaces(cleaned.s + start, len);
-      size_t extra = w > base ? w - base : 0;
-      size_t c = 0;
-      size_t total;
-      Str rest;
-      while (c < len && rt_is_space(cleaned.s[start + c])) {
-        c++;
+  {
+    int seen = 0;
+    while (i < cleaned.n) {
+      size_t start = i;
+      size_t len;
+      while (i < cleaned.n && cleaned.s[i] != '\n') {
+        i++;
       }
-      if ((size_t)ind > SIZE_MAX - extra) {
-        rt_oom();
+      len = i - start;
+      if (line_blank(cleaned.s + start, len)) {
+        strvec_push(arena, out, str_empty());
+      } else {
+        size_t w = leading_spaces(cleaned.s + start, len);
+        size_t extra = w > base ? w - base : 0;
+        size_t step = nest && seen > 0 && extra == 0 ? 4u : 0u;
+        size_t c = 0;
+        size_t total;
+        Str rest;
+        while (c < len && rt_is_space(cleaned.s[start + c])) {
+          c++;
+        }
+        if ((size_t)ind > SIZE_MAX - extra || (size_t)ind + extra > SIZE_MAX - step) {
+          rt_oom();
+        }
+        total = (size_t)ind + step + extra;
+        if (nest && seen > 0 && base == 0 && w > 0) {
+          size_t floor = (size_t)ind + step;
+          total = w > floor ? w : floor;
+        }
+        seen++;
+        rest = str_make(cleaned.s + start + c, len - c);
+        strvec_push(arena, out, make_indent_line(arena, total, rest));
       }
-      total = (size_t)ind + extra;
-      rest = str_make(cleaned.s + start + c, len - c);
-      strvec_push(arena, out, make_indent_line(arena, total, rest));
-    }
-    if (i < cleaned.n && cleaned.s[i] == '\n') {
-      i++;
+      if (i < cleaned.n && cleaned.s[i] == '\n') {
+        i++;
+      }
     }
   }
 }
@@ -2709,8 +3017,10 @@ static void render_node(Converter *cv, const Node *node, int indent, StrVec *out
       break;
     case NK_RAW:
     case NK_COMMENT:
+      reindent(cv->arena, node->text, indent, false, false, out);
+      break;
     case NK_TEXT:
-      reindent(cv->arena, node->text, indent, false, out);
+      reindent(cv->arena, node->text, indent, false, node->nest, out);
       break;
     case NK_GROUP:
       render_children(cv, &node->kids, indent, out);
@@ -2725,7 +3035,7 @@ static void render_node(Converter *cv, const Node *node, int indent, StrVec *out
       Str suffix;
       size_t k;
       memset(&pre, 0, sizeof pre);
-      reindent(cv->arena, node->text, indent, false, &pre);
+      reindent(cv->arena, node->text, indent, false, false, &pre);
       if (pre.len == 0) {
         strvec_push(cv->arena, &pre, spaces_only(cv->arena, indent));
       }
@@ -2750,7 +3060,7 @@ static void render_node(Converter *cv, const Node *node, int indent, StrVec *out
       StrVec lead;
       memset(&lines, 0, sizeof lines);
       memset(&lead, 0, sizeof lead);
-      reindent(cv->arena, node->text, indent, true, &lines);
+      reindent(cv->arena, node->text, indent, true, false, &lines);
       if (lines.len == 0) {
         strvec_push(cv->arena, &lines, spaces_only(cv->arena, indent));
       }
@@ -2778,10 +3088,10 @@ static void render_node(Converter *cv, const Node *node, int indent, StrVec *out
       }
       render_children(cv, &node->kids, indent + 4, out);
       if (node->tail.n > 0) {
-        reindent(cv->arena, node->tail, indent, false, out);
+        reindent(cv->arena, node->tail, indent, false, false, out);
       }
       if (node->follow.n > 0) {
-        reindent(cv->arena, node->follow, indent, false, out);
+        reindent(cv->arena, node->follow, indent, false, false, out);
       }
       break;
     }

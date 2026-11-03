@@ -9,11 +9,12 @@ typedef enum {
   COL_DROP,
   COL_SEMI,
   COL_BEGIN,
-  COL_ARM
+  COL_ARM,
+  COL_ZLABEL
 } ColonMode;
 
 typedef enum { BR_INIT = 0, BR_STMT } BraceKind;
-typedef enum { FK_BLOCK = 0, FK_ENUM, FK_STRUCT, FK_UNION } FrameKind;
+typedef enum { FK_BLOCK = 0, FK_ENUM, FK_STRUCT, FK_UNION, FK_OPAQUE, FK_ERROR, FK_SWITCH } FrameKind;
 typedef enum { OP_LBRACE = 0, OP_BEGIN, OP_NONE } Opener;
 typedef enum { CL_RBRACE = 0, CL_END, CL_UNTIL, CL_NONE } Closer;
 typedef enum { CK_OTHER = 0, CK_OPEN, CK_CLOSE, CK_MID } CondKind;
@@ -35,6 +36,8 @@ typedef struct Frame {
   int header_indent;
   int body_indent;
   bool semi_on_close;
+  bool value_semi;
+  bool comma_child;
   const char *name;
   FrameKind kind;
   bool wants_tail;
@@ -118,6 +121,7 @@ typedef struct Layout {
   int hang_indent;
   const char *hang_text;
   bool expect_while;
+  bool carry_value_semi;
   LogicalLine *held;
   size_t nheld;
   size_t heldcap;
@@ -546,8 +550,20 @@ static void aggregate_info(const Tok *tokens, size_t n, FrameKind *kind, bool *w
       paren++;
     } else if (tok_is(&tokens[i], ")") && paren > 0) {
       paren--;
-    } else if (paren == 0 && (tok_is(&tokens[i], "enum") || tok_is(&tokens[i], "struct") || tok_is(&tokens[i], "union"))) {
-      *kind = tok_is(&tokens[i], "enum") ? FK_ENUM : tok_is(&tokens[i], "struct") ? FK_STRUCT : FK_UNION;
+    } else if (paren == 0 && tokens[i].kind == TOK_KEYWORD
+               && (tok_is(&tokens[i], "enum") || tok_is(&tokens[i], "struct") || tok_is(&tokens[i], "union")
+                   || tok_is(&tokens[i], "opaque") || tok_is(&tokens[i], "error"))) {
+      if (tok_is(&tokens[i], "enum")) {
+        *kind = FK_ENUM;
+      } else if (tok_is(&tokens[i], "struct")) {
+        *kind = FK_STRUCT;
+      } else if (tok_is(&tokens[i], "union")) {
+        *kind = FK_UNION;
+      } else if (tok_is(&tokens[i], "opaque")) {
+        *kind = FK_OPAQUE;
+      } else {
+        *kind = FK_ERROR;
+      }
       kw = (int)i;
       break;
     }
@@ -575,10 +591,13 @@ static void aggregate_info(const Tok *tokens, size_t n, FrameKind *kind, bool *w
   *wants_tail = true;
 }
 
-static bool opens_block(const Tok *code, size_t n, bool block_colon, bool label_colon) {
+static bool opens_block(const Tok *code, size_t n, bool block_colon, bool label_colon, LangId lang) {
   size_t i;
   if (!block_colon) {
     return false;
+  }
+  if (lang == LANG_ZIG) {
+    return true;
   }
   if (n > 0 && (tok_is(&code[0], "case") || tok_is(&code[0], "default"))) {
     return false;
@@ -759,10 +778,20 @@ static bool control_continues(const Tok *code, size_t n, const Tok *ahead, size_
   return an > 0 && ahead[0].col > line_indent;
 }
 
-static BraceKind brace_kind_at(const Tok *code, size_t n, size_t index, const char *hang) {
+static BraceKind brace_kind_at(const Tok *code, size_t n, size_t index, const char *hang, LangId lang) {
   const Tok *prev;
   int depth;
   size_t i;
+  if (lang == LANG_ZIG) {
+    if (index == 0 || index > n) {
+      return BR_STMT;
+    }
+    prev = &code[index - 1u];
+    if (tok_is(prev, "=") || tok_is(prev, ",") || tok_is(prev, "{") || tok_is(prev, ".") || prev->kind == TOK_IDENT) {
+      return BR_INIT;
+    }
+    return BR_STMT;
+  }
   if (index == 0 || index > n) {
     return (hang != NULL && (strcmp(hang, "=") == 0 || strcmp(hang, ",") == 0)) ? BR_INIT : BR_STMT;
   }
@@ -852,7 +881,164 @@ static void state_push_brace(LayoutState *state, BraceKind kind, int paren) {
   state->nbraces++;
 }
 
-static Classified classify_line(const LogicalLine *line, const LayoutState *state, const char *hang, bool label_colon) {
+static bool zig_keeps_colon(const Tok *code, size_t n) {
+  const Tok *name;
+  const Tok *before;
+  if (n < 2u || !tok_is(&code[n - 1u], ":")) {
+    return false;
+  }
+  name = &code[n - 2u];
+  if (name->kind != TOK_IDENT) {
+    return false;
+  }
+  if (n < 3u) {
+    return true;
+  }
+  before = &code[n - 3u];
+  if (tok_is(before, "=") || tok_is(before, "=>") || tok_is(before, "|")) {
+    return true;
+  }
+  if (before->kind == TOK_KEYWORD
+      && (tok_is(before, "return") || tok_is(before, "orelse") || tok_is(before, "else")
+          || tok_is(before, "catch") || tok_is(before, "and") || tok_is(before, "or")
+          || tok_is(before, "defer") || tok_is(before, "errdefer"))) {
+    return true;
+  }
+  return false;
+}
+
+static bool zig_container_line(const Tok *code, size_t n) {
+  size_t i = 0;
+  const Tok *head;
+  if (n > 0 && (tok_is(&code[0], "pub") || tok_is(&code[0], "export"))) {
+    i++;
+  }
+  if (i < n && (tok_is(&code[i], "pub") || tok_is(&code[i], "export"))) {
+    i++;
+  }
+  if (i >= n) {
+    return false;
+  }
+  head = &code[i];
+  if (head->kind == TOK_KEYWORD
+      && (tok_is(head, "fn") || tok_is(head, "const") || tok_is(head, "var") || tok_is(head, "test")
+          || tok_is(head, "usingnamespace") || tok_is(head, "comptime"))) {
+    return false;
+  }
+  return true;
+}
+
+static bool zig_has_fn(const Tok *code, size_t n) {
+  int paren = 0;
+  size_t i;
+  for (i = 0; i < n; i++) {
+    if (tok_is(&code[i], "(")) {
+      paren++;
+    } else if (tok_is(&code[i], ")") && paren > 0) {
+      paren--;
+    } else if (paren == 0 && code[i].kind == TOK_KEYWORD && (tok_is(&code[i], "fn") || tok_is(&code[i], "test"))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool zig_inline_container(const Tok *code, size_t n) {
+  size_t i;
+  for (i = 0; i < n; i++) {
+    int paren;
+    size_t j;
+    if (code[i].kind != TOK_KEYWORD) {
+      continue;
+    }
+    if (!tok_is(&code[i], "struct") && !tok_is(&code[i], "enum") && !tok_is(&code[i], "union")
+        && !tok_is(&code[i], "opaque") && !tok_is(&code[i], "error")) {
+      continue;
+    }
+    paren = 0;
+    for (j = i + 1u; j < n; j++) {
+      if (tok_is(&code[j], ":")) {
+        break;
+      }
+      if (tok_is(&code[j], "(")) {
+        paren++;
+      } else if (tok_is(&code[j], ")") && paren > 0) {
+        paren--;
+      } else if (tok_is(&code[j], "{") && paren == 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static bool zig_tagged_union(const Tok *code, size_t n) {
+  int paren = 0;
+  size_t i;
+  for (i = 0; i < n; i++) {
+    if (tok_is(&code[i], "(")) {
+      paren++;
+    } else if (tok_is(&code[i], ")") && paren > 0) {
+      paren--;
+    } else if (paren == 0 && code[i].kind == TOK_KEYWORD && tok_is(&code[i], "union") && i + 1u < n && tok_is(&code[i + 1u], "(")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool zig_switch(const Tok *code, size_t n) {
+  int paren = 0;
+  size_t i;
+  for (i = 0; i < n; i++) {
+    if (tok_is(&code[i], "(")) {
+      paren++;
+    } else if (tok_is(&code[i], ")") && paren > 0) {
+      paren--;
+    } else if (paren == 0 && code[i].kind == TOK_KEYWORD && tok_is(&code[i], "switch")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool zig_value_semi(const Tok *code, size_t n) {
+  int paren = 0;
+  bool saw_eq = false;
+  bool saw_return = false;
+  bool saw_decl = false;
+  bool saw_catch = false;
+  size_t i;
+  for (i = 0; i < n; i++) {
+    if (tok_is(&code[i], "(")) {
+      paren++;
+    } else if (tok_is(&code[i], ")") && paren > 0) {
+      paren--;
+    } else if (paren == 0) {
+      if (tok_is(&code[i], "=")) {
+        saw_eq = true;
+      }
+      if (tok_is(&code[i], "return")) {
+        saw_return = true;
+      }
+      if (tok_is(&code[i], "const") || tok_is(&code[i], "var")) {
+        saw_decl = true;
+      }
+      if (tok_is(&code[i], "catch") || tok_is(&code[i], "orelse")) {
+        saw_catch = true;
+      }
+    }
+  }
+  if (saw_return || saw_catch) {
+    return true;
+  }
+  if (saw_eq && (saw_decl || !saw_return)) {
+    return true;
+  }
+  return false;
+}
+
+static Classified classify_line(const LogicalLine *line, const LayoutState *state, const char *hang, bool label_colon, LangId lang) {
   Classified out;
   size_t n = 0;
   size_t i;
@@ -871,7 +1057,7 @@ static Classified classify_line(const LogicalLine *line, const LayoutState *stat
     } else if (tok_is(&code[i], "]") && local.bracket > 0) {
       local.bracket--;
     } else if (tok_is(&code[i], "{")) {
-      BraceKind kind = brace_kind_at(code, n, i, hang);
+      BraceKind kind = brace_kind_at(code, n, i, hang, lang);
       if (i == 0 && local.nbraces > 0 && local.braces[local.nbraces - 1u] == BR_INIT) {
         kind = BR_INIT;
       }
@@ -882,7 +1068,7 @@ static Classified classify_line(const LogicalLine *line, const LayoutState *stat
       if (kind == BR_INIT && (local.nbraces == 0 || local.braces[local.nbraces - 1u] != BR_INIT)) {
         out.closed_init = true;
       }
-    } else if (tok_is(&code[i], "?")) {
+    } else if (tok_is(&code[i], "?") && lang != LANG_ZIG) {
       local.ternary++;
     } else if (tok_is(&code[i], ":")) {
       bool is_last = i + 1u == n;
@@ -893,7 +1079,7 @@ static Classified classify_line(const LogicalLine *line, const LayoutState *stat
       }
     }
   }
-  out.opens = opens_block(code, n, block_colon, label_colon);
+  out.opens = opens_block(code, n, block_colon, label_colon, lang);
   out.hanging = !out.opens && n > 0 && (HAS(HANGING, code[n - 1u].text, code[n - 1u].len) || local.ternary > 0);
   out.ternary = local.ternary;
   out.paren = local.paren;
@@ -1007,6 +1193,9 @@ static SegBuf render_line(Arena *arena, const LogicalLine *line, ColonMode colon
         seg_push(arena, &segs, " ", true);
       }
       seg_push(arena, &segs, "{", true);
+    } else if (colon_here && colon == COL_ZLABEL) {
+      seg_push(arena, &segs, ":", false);
+      seg_push(arena, &segs, " {", true);
     } else if (colon_here && colon == COL_BEGIN) {
       seg_push(arena, &segs, " begin", true);
     } else if (colon_here && colon == COL_ARM) {
@@ -1806,7 +1995,7 @@ static void close_frame(Layout *lx, Frame *frame, int source_line, const char *t
   } else if (tail != NULL) {
     brace = open_decl ? arena_printf(lx->arena, "} %s", tail) : arena_printf(lx->arena, "} %s;", tail);
   } else {
-    brace = frame->semi_on_close ? "};" : "}";
+    brace = frame->comma_child ? "}," : (frame->semi_on_close || frame->value_semi) ? "};" : "}";
   }
   seg.text = arena_printf(lx->arena, "%s%s", pad, brace);
   seg.inserted = true;
@@ -1885,13 +2074,21 @@ static void unshift_held(Layout *lx, const LogicalLine *lines, size_t n) {
 }
 
 static void close_statement(Layout *lx, Frame *frame, int source_line, bool attaches) {
-  bool statement = statement_name(frame->name);
-  bool in_case = lx->nstack > 0 && strcmp(lx->stack[lx->nstack - 1u].name, "case") == 0;
-  bool can_move = statement && !in_case && lx->profile->id == LANG_PASCAL && frame->closer == CL_END && !frame->dot && !frame->skip_shell;
+  bool statement;
+  bool in_case;
+  bool can_move;
   size_t nclose = 0;
-  LogicalLine *closes = can_move ? take_trailing_closes(lx, frame->header_indent, &nclose) : NULL;
+  LogicalLine *closes;
   size_t keep = 0;
   size_t i;
+  if (attaches && frame->value_semi) {
+    frame->value_semi = false;
+    lx->carry_value_semi = true;
+  }
+  statement = statement_name(frame->name);
+  in_case = lx->nstack > 0 && strcmp(lx->stack[lx->nstack - 1u].name, "case") == 0;
+  can_move = statement && !in_case && lx->profile->id == LANG_PASCAL && frame->closer == CL_END && !frame->dot && !frame->skip_shell;
+  closes = can_move ? take_trailing_closes(lx, frame->header_indent, &nclose) : NULL;
   if (nclose > 0 && frame->body_cond > 0) {
     int remaining = frame->body_cond;
     for (i = 0; i < nclose; i++) {
@@ -2627,14 +2824,23 @@ Result layout_source(const char *source, size_t len, LangId lang) {
       }
     }
     {
-      bool suppressed = lx.hanging || effective_paren(lx.state.paren, lx.state.braces, lx.state.brace_paren, lx.state.nbraces) > 0
+      int indent = indent_of(line);
+      bool outdented = false;
+      if (lx.has_pending) {
+        outdented = indent <= lx.pending.header_indent
+          && !(lx.pending.wants_tail && indent == lx.pending.header_indent && is_declarator_tail(line));
+      } else if (lx.nstack > 0) {
+        const Frame *top = &lx.stack[lx.nstack - 1u];
+        outdented = indent <= top->header_indent
+          && !(top->wants_tail && indent == top->header_indent && is_declarator_tail(line));
+      }
+      bool suppressed = (lx.hanging && !outdented) || effective_paren(lx.state.paren, lx.state.braces, lx.state.brace_paren, lx.state.nbraces) > 0
         || lx.state.bracket > 0 || (lx.state.nbraces > 0 && lx.state.braces[lx.state.nbraces - 1u] == BR_INIT);
       int closed = 0;
       int last_closed = -1;
       bool absorbed = false;
       bool absorbed_hang = false;
       size_t ahead_i = next_code_at(&lx, index);
-      int indent = indent_of(line);
       bool bitfield = false;
       if (code_n > 0 && tok_is(&code[code_n - 1u], ":") && ahead_i != (size_t)-1) {
         size_t an = 0;
@@ -2818,7 +3024,8 @@ Result layout_source(const char *source, size_t len, LangId lang) {
         glue_word = strcmp(head_word, "else") == 0 || strcmp(head_word, "catch") == 0 || strcmp(head_word, "otherwise") == 0
           || (profile->id != LANG_PASCAL && strcmp(head_word, "finally") == 0) || do_while;
         attaches = closed >= 1 && last_closed == indent;
-        glue = code_n > 0 && (code[0].kind == TOK_KEYWORD || profile->id == LANG_PASCAL) && glue_word && attaches && !directive_between && only_trivia;
+        glue = code_n > 0 && (code[0].kind == TOK_KEYWORD || profile->id == LANG_PASCAL) && glue_word && attaches && !directive_between && only_trivia
+          && !(profile->id == LANG_ZIG && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_SWITCH && head_word != NULL && strcmp(head_word, "else") == 0);
         if (!glue && directive_between && attaches && glue_word && lx.nout > 0) {
           const char *glued = text_of_line(arena, &lx.out[lx.nout - 1u]);
           const char *trim = glued;
@@ -2973,7 +3180,7 @@ Result layout_source(const char *source, size_t len, LangId lang) {
         } else {
           flush_held(&lx);
         }
-        next = classify_line(line, &lx.state, lx.hang_text, is_label_colon(&lx, index, line));
+        next = classify_line(line, &lx.state, lx.hang_text, is_label_colon(&lx, index, line), profile->id);
         if (ahead != (size_t)-1) {
           ahead_code = code_tokens(&lx.logical[ahead], &ahead_n);
         }
@@ -2984,7 +3191,15 @@ Result layout_source(const char *source, size_t len, LangId lang) {
           && ((head_text != NULL && HAS(COLON_HEADER, head_text, strlen(head_text))) || (code_n > 0 && tok_is(&code[code_n - 1u], ")"))
               || (code_n == 1 && code[0].kind == TOK_IDENT) || (head_text != NULL && (strcmp(head_text, "case") == 0 || strcmp(head_text, "default") == 0)));
         join_string = code_n > 0 && code[code_n - 1u].kind == TOK_STRING && ahead_n > 0 && ahead_code[0].kind == TOK_STRING;
-        in_enum = lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_ENUM && !(next.nbraces > 0 && next.braces[next.nbraces - 1u] == BR_INIT);
+        in_enum = false;
+        if (lx.nstack > 0 && !(next.nbraces > 0 && next.braces[next.nbraces - 1u] == BR_INIT)) {
+          FrameKind top_kind = lx.stack[lx.nstack - 1u].kind;
+          bool zig_container = profile->id == LANG_ZIG
+            && (top_kind == FK_ENUM || top_kind == FK_ERROR || top_kind == FK_STRUCT || top_kind == FK_UNION || top_kind == FK_OPAQUE);
+          in_enum = top_kind == FK_SWITCH
+            || (profile->id != LANG_ZIG && (top_kind == FK_ENUM || top_kind == FK_ERROR))
+            || (zig_container && zig_container_line(code, code_n));
+        }
         indented_star = ahead_n > 0 && (tok_is(&ahead_code[0], "*") || tok_is(&ahead_code[0], "&")) && ahead_code[0].col > indent;
         cont = is_open_header(&lx, index, line, next.paren) || lone_colon_next || bitfield
           || (ahead_n > 0 && HAS(CONT_START, ahead_code[0].text, ahead_code[0].len) && !tok_is(&ahead_code[0], "="))
@@ -3020,6 +3235,9 @@ Result layout_source(const char *source, size_t len, LangId lang) {
         }
         opens = next.opens;
         colon = opens ? COL_BRACE : COL_KEEP;
+        if (profile->id == LANG_ZIG && opens && zig_keeps_colon(code, code_n)) {
+          colon = COL_ZLABEL;
+        }
         if (do_while) {
           opens = false;
           colon = code_n > 0 && tok_is(&code[code_n - 1u], ":") ? COL_DROP : COL_KEEP;
@@ -3096,7 +3314,9 @@ Result layout_source(const char *source, size_t len, LangId lang) {
           free(words);
         }
         {
-          SegBuf rendered = render_line(arena, line, colon, term, prefix != NULL);
+          bool zig_multi = profile->id == LANG_ZIG && strcmp(term, ";") == 0 && code_n == 1 && code[0].kind == TOK_STRING
+            && code[0].len >= 2u && code[0].text[0] == '\\' && code[0].text[1] == '\\';
+          SegBuf rendered = render_line(arena, line, colon, zig_multi ? "" : term, prefix != NULL);
           OutSeg *all = NULL;
           size_t na = nprefix + rendered.len;
           if (na > 0) {
@@ -3112,6 +3332,14 @@ Result layout_source(const char *source, size_t len, LangId lang) {
           free(all);
           free(rendered.items);
           free(prefix);
+          if (zig_multi) {
+            OutSeg semi;
+            int at = statement_start_indent(&lx, index, line);
+            size_t pad_n = at > 0 ? (size_t)(at - 1) : 0;
+            semi.text = arena_printf(arena, "%s;", arena_repeat(arena, ' ', pad_n));
+            semi.inserted = true;
+            explode_into(&lx, &semi, 1, line->no);
+          }
         }
         if (profile->id == LANG_PASCAL && lx.nout > 0) {
           const char *joined = text_of_line(arena, &lx.out[lx.nout - 1u]);
@@ -3141,9 +3369,25 @@ Result layout_source(const char *source, size_t len, LangId lang) {
           Frame opened;
           memset(&opened, 0, sizeof opened);
           aggregate_info(code, code_n, &fk, &wants);
+          if (profile->id == LANG_ZIG) {
+            wants = false;
+            if (zig_inline_container(code, code_n)) {
+              fk = FK_BLOCK;
+            } else if (fk == FK_BLOCK && zig_tagged_union(code, code_n) && !zig_has_fn(code, code_n)) {
+              fk = FK_UNION;
+            }
+            if (zig_switch(code, code_n)) {
+              fk = FK_SWITCH;
+            }
+          }
           opened.header_indent = statement_start_indent(&lx, index, line);
           opened.body_indent = indent;
           opened.semi_on_close = semi_on_close(style_source, style_n, profile);
+          opened.value_semi = profile->id == LANG_ZIG && (zig_value_semi(code, code_n) || (head_text != NULL && strcmp(head_text, "else") == 0 && lx.carry_value_semi));
+          if (head_text != NULL && strcmp(head_text, "else") == 0) {
+            lx.carry_value_semi = false;
+          }
+          opened.comma_child = profile->id == LANG_ZIG && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_SWITCH;
           opened.name = (pwords != NULL && words_has(pwords, nw, "case") && nw > 0 && strcmp(pwords[nw - 1u], "of") == 0)
             ? "case" : header_name(arena, style_source, style_n);
           opened.kind = fk;

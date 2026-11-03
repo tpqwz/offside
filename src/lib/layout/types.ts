@@ -1,4 +1,4 @@
-export type LangId = "c" | "java" | "javascript" | "pascal";
+export type LangId = "c" | "java" | "javascript" | "pascal" | "zig";
 
 export type TokenKind =
   | "ident"

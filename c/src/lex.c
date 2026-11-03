@@ -384,7 +384,7 @@ static void consume_number(Lexer *lx) {
     for (k = 0; k < suffix; k++) {
       bump(lx);
     }
-  } else {
+  } else if (lx->profile->id != LANG_ZIG) {
     while (lx->i < lx->n) {
       char ch = at(lx, lx->i);
       if (ch != 'u' && ch != 'U' && ch != 'l' && ch != 'L' && ch != 'f' && ch != 'F' && ch != 'n') {
@@ -695,11 +695,53 @@ void lex_source(Arena *arena, const char *source, size_t len, const Profile *pro
     if (profile->id == LANG_PASCAL && lex_pascal(&lx)) {
       continue;
     }
+    if (profile->id == LANG_ZIG && lx.at_bol && ch == '\\' && at(&lx, lx.i + 1u) == '\\') {
+      int line = lx.line;
+      int col = lx.col;
+      size_t start = lx.i;
+      while (lx.i < lx.n && at(&lx, lx.i) != '\n') {
+        bump(&lx);
+      }
+      push_tok(&lx, TOK_STRING, line, col, start);
+      continue;
+    }
+    if (profile->id == LANG_ZIG && ch == '@') {
+      int line = lx.line;
+      int col = lx.col;
+      size_t start = lx.i;
+      bump(&lx);
+      if (at(&lx, lx.i) == '"') {
+        bump(&lx);
+        while (lx.i < lx.n && at(&lx, lx.i) != '\n') {
+          if (at(&lx, lx.i) == '\\') {
+            bump(&lx);
+            if (lx.i < lx.n && at(&lx, lx.i) != '\n') {
+              bump(&lx);
+            }
+            continue;
+          }
+          if (at(&lx, lx.i) == '"') {
+            bump(&lx);
+            break;
+          }
+          bump(&lx);
+        }
+        push_tok(&lx, TOK_IDENT, line, col, start);
+        continue;
+      }
+      if (rt_is_alpha(at(&lx, lx.i)) || at(&lx, lx.i) == '_') {
+        while (lx.i < lx.n && (rt_is_alnum(at(&lx, lx.i)) || at(&lx, lx.i) == '_')) {
+          bump(&lx);
+        }
+        push_tok(&lx, TOK_IDENT, line, col, start);
+        continue;
+      }
+    }
     if (ch == '/' && at(&lx, lx.i + 1u) == '/') {
       consume_line_comment(&lx);
       continue;
     }
-    if (ch == '/' && at(&lx, lx.i + 1u) == '*') {
+    if (profile->id != LANG_ZIG && ch == '/' && at(&lx, lx.i + 1u) == '*') {
       consume_block_comment(&lx);
       continue;
     }

@@ -45,7 +45,7 @@ static const char HELP[] =
   "  offside space hello.c\n"
   "  offside run demo.spas\n"
   "\n"
-  "  --lang c|java|javascript|pascal   ignore the extension\n"
+  "  --lang c|java|javascript|pascal|zig   ignore the extension\n"
   "  --cc <compiler>            C compiler, else tcc or cc\n"
   "  --keep                     leave the host file on disk\n"
   "  --plain                    emit host code without #line\n"
@@ -778,6 +778,57 @@ static int run_javascript(Arena *arena, const char *source_path, const Result *r
   return code;
 }
 
+static int run_zig(Arena *arena, const char *compiler, const char *source_path, const Result *result, const ArgList *cc_flags,
+                   const ArgList *program_args, bool keep, bool report) {
+  char *dir = make_temp();
+  char *host_path;
+  HostFile rendered;
+  ArgList args;
+  int code;
+  size_t i;
+  bool stop;
+  if (dir == NULL) {
+    return 1;
+  }
+  host_path = arena_printf(arena, "%s%c%s", dir, DIR_SEP, host_file_name(arena, LANG_ZIG, source_path, result->code));
+  render_host(arena, result, source_path, false, &rendered);
+  if (write_text(host_path, rendered.code) != 0) {
+    free(dir);
+    return 1;
+  }
+  stop = flag_is(cc_flags, "-c");
+  memset(&args, 0, sizeof args);
+  if (stop) {
+    args_push(&args, "build-exe");
+    args_push(&args, host_path);
+    args_push(&args, "-femit-bin=offside-out");
+    for (i = 0; i < cc_flags->len; i++) {
+      if (strcmp(cc_flags->items[i], "-c") != 0) {
+        args_push(&args, cc_flags->items[i]);
+      }
+    }
+  } else {
+    args_push(&args, "run");
+    args_push(&args, host_path);
+    for (i = 0; i < cc_flags->len; i++) {
+      args_push(&args, cc_flags->items[i]);
+    }
+    args_push(&args, "--");
+    for (i = 0; i < program_args->len; i++) {
+      args_push(&args, program_args->items[i]);
+    }
+  }
+  code = run_tool(compiler, &args, NULL, arena, host_path, source_path, &rendered, report);
+  args_free(&args);
+  if (keep) {
+    fprintf(stderr, "kept %s\n", host_path);
+  } else {
+    rm_tree(dir);
+  }
+  free(dir);
+  return code;
+}
+
 static int parse_plan(int argc, char **argv, Plan *plan, const char **error) {
   int i;
   int groups = 1;
@@ -818,7 +869,7 @@ static int parse_plan(int argc, char **argv, Plan *plan, const char **error) {
       }
       if (strcmp(argv[i], "--lang") == 0 || strcmp(argv[i], "-l") == 0) {
         if (i + 1 >= argc) {
-          *error = "--lang needs c, java, javascript, or pascal.";
+          *error = "--lang needs c, java, javascript, pascal, or zig.";
           return 2;
         }
         plan->lang = argv[++i];
@@ -926,6 +977,10 @@ static int execute(Plan *plan) {
   } else if (kind.lang == LANG_PASCAL) {
     code = run_pascal(scratch, plan->cc != NULL ? plan->cc : default_pascal_compiler(scratch), plan->file, &laid,
                       &plan->cc_flags, &plan->program_args, plan->keep, !kind.host);
+  } else if (kind.lang == LANG_ZIG) {
+    const char *zig = plan->cc != NULL ? plan->cc : getenv("OFFSIDE_ZIG");
+    code = run_zig(scratch, zig != NULL && zig[0] != '\0' ? zig : "zig", plan->file, &laid,
+                   &plan->cc_flags, &plan->program_args, plan->keep, !kind.host);
   } else {
     code = run_javascript(scratch, plan->file, &laid, &plan->cc_flags, &plan->program_args, plan->keep, !kind.host);
   }

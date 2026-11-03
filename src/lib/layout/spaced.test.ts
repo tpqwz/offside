@@ -68,6 +68,19 @@ skip:
     assert.match(code, /\n {4}skip:\n {4}return GREEN\n/);
   });
 
+  it("indents a same-column continuation so the statement stays one", () => {
+    const src = "int f(void) {\nreturn\n0;\n}\nvoid g(void) {\nfoo\n(bar);\n}\n";
+    const spaced = toSpaced(src, "c");
+    assert.match(spaced.code, /return\n {8}0\n/);
+    assert.match(spaced.code, /foo\n {8}\(bar\)\n/);
+    const back = layoutSource(spaced.code, "c").code;
+    assert.match(back, /return\n {8}0;/);
+    assert.match(back, /foo\n {8}\(bar\);/);
+    assert.doesNotMatch(back, /return;/);
+    const again = layoutSource(toSpaced(back, "c").code, "c").code;
+    assert.equal(again, back);
+  });
+
   it("turns Java and JavaScript blocks into colons", () => {
     const java = toSpaced(
       `class Greeter {

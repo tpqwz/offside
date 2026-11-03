@@ -56,6 +56,15 @@ const JS_KEYWORDS = [
   "with", "yield", "async", "await", "of",
 ];
 
+const ZIG_KEYWORDS = [
+  "addrspace", "align", "allowzero", "and", "anyframe", "anytype", "asm",
+  "break", "callconv", "catch", "comptime", "const", "continue", "defer",
+  "else", "enum", "errdefer", "error", "export", "extern", "fn", "for", "if",
+  "inline", "linksection", "noalias", "noinline", "nosuspend", "opaque", "or",
+  "orelse", "packed", "pub", "resume", "return", "struct", "suspend", "switch",
+  "test", "threadlocal", "try", "union", "unreachable", "var", "volatile", "while",
+];
+
 const C_PROGRAM = `#include <stdio.h>
 
 struct Point:
@@ -153,6 +162,48 @@ line \${1 + 1}\`
 
 const bump = (x) =>:
     return x + 1
+`;
+
+const ZIG_PROGRAM = `const std = @import("std")
+
+const Point = struct:
+    x: i32,
+    y: i32,
+
+    pub fn manhattan(self: Point) i32:
+        var ax: i32 = self.x
+        if (ax < 0):
+            ax = -ax
+        return ax + self.y
+
+pub fn add(a: i32, b: i32) i32:
+    return a + b
+
+pub fn main() void:
+    const p = Point{ .x = 1, .y = 2 }
+    var i: i32 = 0
+    while (i < 3) : (i += 1):
+        if (i == 1):
+            continue
+    const message =
+        \\\\hello
+        \\\\zig
+    _ = message
+    _ = p.manhattan()
+    _ = add(1, 2)
+    _ = std
+
+test "add":
+    try std.testing.expect(add(2, 2) == 4)
+`;
+
+const ZIG_EDGES = `pub fn pick(n: i32) i32:
+    const x = blk:
+        break :blk n
+    return switch (n):
+        0 => 0,
+        1 => x,
+        else => n
 `;
 
 const PASCAL_PROGRAM = `{$mode objfpc}{$H+}
@@ -281,6 +332,23 @@ export const PROFILES: Record<LangId, Profile> = {
       { id: "unit", label: "Unit", source: PASCAL_UNIT },
     ],
   ),
+  zig: profile(
+    "zig",
+    "Zig",
+    "out.zig",
+    ZIG_KEYWORDS,
+    { preprocessor: false, templates: false, regex: false, semiClose: ["struct", "union", "enum", "opaque", "error"] },
+    {
+      cue: "A trailing colon opens a block. Payloads stay as |x|. A bare name colon is a label: blk:",
+      terminator: "Semicolon on a finished statement. Container fields and switch prongs take commas",
+      semiClose: "struct, union, enum, opaque, and error close with }; a value switch or label does too",
+      transparent: "No preprocessor. // comments and \\\\ lines pass through. // and block comments are not the same: Zig has no /* */",
+    },
+    [
+      { id: "program", label: "Program", source: ZIG_PROGRAM },
+      { id: "edges", label: "Edges", source: ZIG_EDGES },
+    ],
+  ),
 };
 
-export const LANGS: LangId[] = ["c", "java", "javascript", "pascal"];
+export const LANGS: LangId[] = ["c", "java", "javascript", "pascal", "zig"];

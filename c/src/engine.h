@@ -7,7 +7,8 @@ typedef enum LangId {
   LANG_C = 0,
   LANG_JAVA = 1,
   LANG_JAVASCRIPT = 2,
-  LANG_PASCAL = 3
+  LANG_PASCAL = 3,
+  LANG_ZIG = 4
 } LangId;
 
 typedef enum TokenKind {

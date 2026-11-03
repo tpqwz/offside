@@ -13,7 +13,7 @@ const KR_DECL = new Set([
 const HEADER_WORD = /\b(else|do|struct|union|enum|class|interface|record|try|finally)\b/;
 
 type Node =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; nest?: boolean }
   | { type: "blank" }
   | { type: "raw"; text: string }
   | { type: "comment"; text: string }
@@ -105,10 +105,19 @@ class Converter {
     if (!tok) return { node: { type: "text", text: "" }, next: i, end: this.mark };
     if (tok.text === "case" || tok.text === "default") return this.parseCase(i);
     if (this.isLabel(i)) return this.parseLabel(i);
-    if (CONTROL.has(tok.text)) return this.parseControl(i);
+    if (CONTROL.has(tok.text)) {
+      if (this.lang === "zig") return this.parseGeneral(i);
+      return this.parseControl(i);
+    }
     if (tok.text === "do") return this.parseDo(i);
-    if (tok.text === "try") return this.parseTry(i);
-    if (tok.text === "else") return this.parseElse(i);
+    if (tok.text === "try") {
+      if (this.lang === "zig") return this.parseGeneral(i);
+      return this.parseTry(i);
+    }
+    if (tok.text === "else") {
+      if (this.lang === "zig" && this.code[i + 1]?.text === "=>") return this.parseGeneral(i);
+      return this.parseElse(i);
+    }
     if (tok.text === "finally") return this.parseFinally(i);
     if (tok.text === ";") {
       const prev = this.code[i - 1];
@@ -319,7 +328,7 @@ class Converter {
       const to = semi < 0 ? close : semi;
       const text = this.stripSemis(i, to);
       const next = semi < 0 ? close + 1 : semi + 1;
-      return { node: { type: "text", text }, next, end: this.offsetAfter(next) };
+      return { node: { type: "text", text, nest: true }, next, end: this.offsetAfter(next) };
     }
     this.mark = Math.max(this.mark, this.code[i]!.end);
     const inner = this.parseSeq(i + 1, true);
@@ -333,6 +342,7 @@ class Converter {
     let bracket = 0;
     let sawEq = false;
     let fnClose = -1;
+    let inPayload = false;
     const items: Mix[] = [];
     let chunk = i;
 
@@ -351,12 +361,21 @@ class Converter {
          next if/for/while is a new statement; absorbing its brace turns the
          macro into a header and drops the body out of the block. */
       if (
+        this.lang !== "zig" &&
         j > i &&
         paren === 0 &&
         bracket === 0 &&
         (CONTROL.has(tok.text) || tok.text === "else" || tok.text === "do" || tok.text === "try" || tok.text === "finally")
       ) {
         break;
+      }
+
+      if (tok.text === "|") {
+        if (inPayload) inPayload = false;
+        else {
+          const prev = this.code[j - 1];
+          if (prev && (prev.text === ")" || prev.text === "catch" || prev.text === "else")) inPayload = true;
+        }
       }
 
       if (this.lang === "c" && tok.text === "{" && this.code[j - 1]?.text === "(") {
@@ -396,7 +415,7 @@ class Converter {
       else if (tok.text === "=" && paren === 0 && bracket === 0) sawEq = true;
       else if (tok.text === "{" && paren === 0 && bracket === 0) {
         const role = this.braceRole(j);
-        const krBody = !sawEq && fnClose >= 0 && j > fnClose + 1 && this.krBody(fnClose, j);
+        const krBody = this.lang !== "zig" && !sawEq && fnClose >= 0 && j > fnClose + 1 && this.krBody(fnClose, j);
         if (role === "colon" || krBody) {
           if (items.length === 0) return this.finishColon(i, j);
           const colon = this.finishColon(i, j);
@@ -413,6 +432,11 @@ class Converter {
         }
         j = close + 1;
         continue;
+      } else if (this.lang === "zig" && tok.text === "," && paren === 0 && bracket === 0 && !inPayload && this.zigCommaEnds(j)) {
+        pushText(j);
+        const nodes = this.mixNodes(items);
+        const node = nodes.length === 1 ? nodes[0]! : { type: "group" as const, nodes };
+        return { node, next: j + 1, end: this.offsetAfter(j + 1) };
       } else if (tok.text === ";" && paren === 0 && bracket === 0) {
         if (!sawEq && fnClose >= 0 && j > fnClose + 1 && this.krDecl(fnClose, j) && this.krContinues(j)) {
           j++;
@@ -443,16 +467,21 @@ class Converter {
       this.notes.push({ line: this.code[brace]!.line, message: "Unclosed { in the host source." });
       return { node: { type: "text", text: this.stripSemis(start, brace) }, next: brace + 1, end: this.offsetAfter(brace + 1) };
     }
-    const header = this.headerText(start, brace);
-    const isEnum = this.hasKeyword(start, brace, "enum");
+    const headerRaw = this.headerText(start, brace);
+    const header = this.lang === "zig" ? headerRaw.replace(/:[ \t]*$/, "") : headerRaw;
+    const prevBrace = this.code[brace - 1];
+    const isEnum =
+      this.hasKeyword(start, brace, "enum") || (this.lang === "zig" && prevBrace?.text === "error");
     const lead = this.leadIn(brace);
     let body: Node[] = [];
-    if (isEnum) {
+    const list = isEnum && this.listBody(brace, close);
+    if (list) {
       body = [...lead, ...this.enumItems(brace, close)];
     } else {
       body = [...lead, ...this.parseSeq(brace + 1, true).nodes];
     }
     let next = close + 1;
+    if (this.lang === "zig" && this.code[next]?.text === ",") next++;
     const aggregate = this.lang === "c" && this.hasAggregate(start, brace);
     let tail = "";
     if (aggregate && this.code[next] && this.code[next]!.text !== ";" && this.code[next]!.text !== "}") {
@@ -499,6 +528,27 @@ class Converter {
     return items;
   }
 
+  /** A comma list, not an enum that also carries methods. */
+  listBody(brace: number, close: number): boolean {
+    let paren = 0;
+    let bracket = 0;
+    let nest = 0;
+    for (let k = brace + 1; k < close; k++) {
+      const tok = this.code[k];
+      if (!tok) continue;
+      if (tok.text === "(") paren++;
+      else if (tok.text === ")" && paren > 0) paren--;
+      else if (tok.text === "[") bracket++;
+      else if (tok.text === "]" && bracket > 0) bracket--;
+      else if (tok.text === "{") {
+        if (paren === 0 && bracket === 0 && nest === 0) return false;
+        nest++;
+      } else if (tok.text === "}" && nest > 0) nest--;
+      else if (paren === 0 && bracket === 0 && nest === 0 && tok.kind === "keyword" && tok.text === "fn") return false;
+    }
+    return true;
+  }
+
   reshapeAggregate(start: number, brace: number, node: Node, tail: string): Node {
     if (node.type !== "colon") return node;
     const simple = this.tailIsSimple(tail);
@@ -515,7 +565,7 @@ class Converter {
 
   mixNodes(items: Mix[]): Node[] {
     if (items.length === 0) return [];
-    if (items.length === 1 && items[0]?.kind === "text") return [{ type: "text", text: items[0].text }];
+    if (items.length === 1 && items[0]?.kind === "text") return [{ type: "text", text: items[0].text, nest: true }];
     const nodes: Node[] = [];
     let prefix = "";
     for (let n = 0; n < items.length; n++) {
@@ -527,7 +577,7 @@ class Converter {
           const prev = nodes[nodes.length - 1];
           if (prev && prev.type === "sexpr") prev.suffix = item.text.trim();
           prefix = "";
-        } else nodes.push({ type: "text", text: item.text });
+        } else nodes.push({ type: "text", text: item.text, nest: true });
       } else {
         nodes.push({ type: "sexpr", prefix: prefix.trim(), body: item.body, suffix: "" });
         prefix = "";
@@ -545,7 +595,7 @@ class Converter {
       case "comment":
         return reindent(node.text, indent);
       case "text":
-        return reindent(node.text, indent);
+        return reindent(node.text, indent, "min", node.nest === true);
       case "group":
         return node.nodes.flatMap((child) => this.render(child, indent));
       case "keep":
@@ -600,6 +650,10 @@ class Converter {
   }
 
   braceRole(index: number): "init" | "expr" | "colon" | "keep" {
+    if (this.lang === "zig") {
+      const zig = this.zigBrace(index);
+      if (zig) return zig;
+    }
     const prev = this.code[index - 1];
     if (!prev) return "keep";
     if (prev.text === "=" || prev.text === "," || prev.text === "{") return "init";
@@ -621,6 +675,82 @@ class Converter {
     }
     if (this.looksLikeAggregate(index)) return "colon";
     return "keep";
+  }
+
+  zigBrace(index: number): "init" | "expr" | "colon" | "keep" | null {
+    const prev = this.code[index - 1];
+    if (!prev) return "keep";
+    if (prev.text === "=" || prev.text === "," || prev.text === "{" || prev.text === ".") return "init";
+    if (prev.text === "=>" || prev.text === "|" || prev.text === ")") return "colon";
+    if (prev.text === ":" && this.code[index - 2]?.kind === "ident") return "colon";
+    if (prev.text === "}" && (this.sawKeyword(index, "fn") || this.sawKeyword(index, "test"))) return "colon";
+    if (["else", "orelse", "catch", "struct", "enum", "union", "opaque", "error", "comptime", "defer", "errdefer"].includes(prev.text)) {
+      if (["struct", "enum", "union", "opaque", "error"].includes(prev.text) && this.containerBraceIsInline(index)) return "keep";
+      return "colon";
+    }
+    if (prev.kind === "string") return "colon";
+    if (prev.kind === "ident" || prev.kind === "keyword") {
+      if (this.sawKeyword(index, "fn") || this.sawKeyword(index, "test")) return "colon";
+      return "init";
+    }
+    return null;
+  }
+
+  /** A `{` after struct/enum/union/opaque/error is a type (`error{E}!T`) when the statement continues past the matching `}`. */
+  containerBraceIsInline(brace: number): boolean {
+    const close = this.match(brace, "{", "}");
+    if (close < 0) return false;
+    const next = this.code[close + 1];
+    if (!next) return false;
+    return next.text !== ";" && next.text !== ",";
+  }
+
+  /** A comma ends a Zig statement unless it sits in a same-line switch item (`0, 1 =>`). */
+  zigCommaEnds(comma: number): boolean {
+    const here = this.code[comma];
+    if (!here) return true;
+    let paren = 0;
+    let bracket = 0;
+    for (let k = comma + 1; k < this.code.length; k++) {
+      const tok = this.code[k];
+      if (!tok || tok.line !== here.line) return true;
+      if (tok.text === "(") paren++;
+      else if (tok.text === ")") {
+        if (paren === 0) return true;
+        paren--;
+      } else if (tok.text === "[") bracket++;
+      else if (tok.text === "]") {
+        if (bracket === 0) return true;
+        bracket--;
+      } else if (paren === 0 && bracket === 0 && tok.text === "=>") return false;
+      else if (paren === 0 && bracket === 0 && (tok.text === ";" || tok.text === "{" || tok.text === "}")) return true;
+    }
+    return true;
+  }
+
+  sawKeyword(brace: number, word: string): boolean {
+    let paren = 0;
+    let bracket = 0;
+    let nest = 0;
+    for (let k = brace - 1; k >= 0; k--) {
+      const tok = this.code[k];
+      if (!tok) continue;
+      if (tok.text === ")") paren++;
+      else if (tok.text === "(") {
+        if (paren === 0) return false;
+        paren--;
+      } else if (tok.text === "}") nest++;
+      else if (tok.text === "{") {
+        if (nest === 0) return false;
+        nest--;
+      } else if (tok.text === "]") bracket++;
+      else if (tok.text === "[") {
+        if (bracket === 0) return false;
+        bracket--;
+      } else if (paren === 0 && bracket === 0 && nest === 0 && tok.text === ";") return false;
+      else if (paren === 0 && bracket === 0 && nest === 0 && tok.kind === "keyword" && tok.text === word) return true;
+    }
+    return false;
   }
 
   looksLikeAggregate(brace: number): boolean {
@@ -741,6 +871,7 @@ class Converter {
   }
 
   colonWhere(brace: number, header: string): "inline" | "own" {
+    if (this.lang === "zig") return "inline";
     const prev = this.code[brace - 1];
     if (prev && (prev.text === ")" || prev.text === "=>")) return "inline";
     const last = header.split("\n").pop() ?? "";
@@ -750,6 +881,7 @@ class Converter {
   isLabel(i: number): boolean {
     const tok = this.code[i];
     const colon = this.code[i + 1];
+    if (this.lang === "zig") return false;
     return !!tok && tok.kind === "ident" && colon?.text === ":";
   }
 
@@ -1112,20 +1244,43 @@ function isEmpty(node: Node): boolean {
   return node.type === "text" && node.text.trim() === "";
 }
 
-function reindent(text: string, indent: number, anchor: "min" | "first" = "min"): string[] {
+function reindent(text: string, indent: number, anchor: "min" | "first" = "min", nest = false): string[] {
   const cleaned = text.replace(/\t/g, "    ").replace(/[ \t]+$/g, "").replace(/^\n+/, "").replace(/\s+$/g, "");
   if (!cleaned.trim()) return [];
   const lines = cleaned.split("\n");
   const widths = lines.map((line) => (line.trim() ? (line.match(/^[ ]*/) ?? [""])[0].length : null));
   const present = widths.filter((n): n is number => n !== null);
+  const zigLine = lines.some((line) => line.trimStart().startsWith("\\\\"));
+  if (zigLine && (present[0] ?? 0) === 0 && present.length > 1) {
+    const restMin = Math.min(...present.slice(1));
+    let started = false;
+    return lines.map((line) => {
+      if (!line.trim()) return "";
+      const width = (line.match(/^[ ]*/) ?? [""])[0].length;
+      if (!started) {
+        started = true;
+        return `${" ".repeat(indent)}${line.trimStart()}`;
+      }
+      const extra = Math.max(0, width - restMin);
+      return `${" ".repeat(indent + 4 + extra)}${line.trimStart()}`;
+    });
+  }
   let base = present[0] ?? 0;
   if (anchor !== "first") {
     for (const width of present) if (width < base) base = width;
   }
+  let seen = 0;
   return lines.map((line) => {
     if (!line.trim()) return "";
     const width = (line.match(/^[ ]*/) ?? [""])[0].length;
-    return `${" ".repeat(indent + Math.max(0, width - base))}${line.trimStart()}`;
+    const extra = Math.max(0, width - base);
+    const step = nest && seen > 0 && extra === 0 ? 4 : 0;
+    // A continuation sliced from the host already includes its absolute column.
+    // Adding the block indent on top of that column walks the line right on every trip.
+    const sum = indent + step + extra;
+    const total = nest && seen > 0 && base === 0 && width > 0 ? Math.max(indent + step, width) : sum;
+    seen++;
+    return `${" ".repeat(total)}${line.trimStart()}`;
   });
 }
 

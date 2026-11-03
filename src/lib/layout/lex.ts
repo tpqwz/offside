@@ -269,7 +269,7 @@ export function lex(source: string, profile: Profile): { tokens: Tok[]; notes: L
       if (suffix && !/[A-Za-z0-9_$]/.test(rest[suffix[0].length] ?? "")) {
         for (let k = 0; k < suffix[0].length; k++) bump();
       }
-    } else {
+    } else if (profile.id !== "zig") {
       while (i < source.length && /[uUlLfFn]/.test(source[i] ?? "")) bump();
     }
     push("number", from);
@@ -475,11 +475,43 @@ export function lex(source: string, profile: Profile): { tokens: Tok[]; notes: L
       continue;
     }
     if (profile.id === "pascal" && lexPascal()) continue;
+    if (profile.id === "zig" && atBol && c === "\\" && source[i + 1] === "\\") {
+      const from = snapshot();
+      while (i < source.length && source[i] !== "\n") bump();
+      push("string", from);
+      continue;
+    }
+    if (profile.id === "zig" && c === "@") {
+      const from = snapshot();
+      bump();
+      if (source[i] === '"') {
+        bump();
+        while (i < source.length && source[i] !== "\n") {
+          if (source[i] === "\\") {
+            bump();
+            if (i < source.length && source[i] !== "\n") bump();
+            continue;
+          }
+          if (source[i] === '"') {
+            bump();
+            break;
+          }
+          bump();
+        }
+        push("ident", from);
+        continue;
+      }
+      if (/[A-Za-z_]/.test(source[i] ?? "")) {
+        while (i < source.length && /[A-Za-z0-9_]/.test(source[i] ?? "")) bump();
+        push("ident", from);
+        continue;
+      }
+    }
     if (c === "/" && source[i + 1] === "/") {
       consumeLineComment();
       continue;
     }
-    if (c === "/" && source[i + 1] === "*") {
+    if (profile.id !== "zig" && c === "/" && source[i + 1] === "*") {
       consumeBlockComment();
       continue;
     }

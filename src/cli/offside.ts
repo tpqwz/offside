@@ -17,16 +17,17 @@ offside run <file> [program args] [-- <compiler args>] [-- <program args>]
 offside emit <file> [--plain]
 offside space <file>
 
-  .csp .sjava .sjs .spas     spaced source
-  .c .h .java .js            host C, Java, JavaScript
+  .csp .sjava .sjs .spas .szig   spaced source
+  .c .h .java .js .zig       host C, Java, JavaScript, Zig
   .pas .pp .lpr .dpr .inc    host Pascal
 
   offside run hello.csp -- -O2
   offside emit hello.csp
   offside space hello.c
   offside run demo.spas
+  offside run demo.szig
 
-  --lang c|java|javascript|pascal   ignore the extension
+  --lang c|java|javascript|pascal|zig   ignore the extension
   --cc <compiler>            C compiler, else tcc or cc
   --keep                     leave the host file on disk
   --plain                    emit host code without #line
@@ -38,6 +39,7 @@ offside space <file>
 
   C: tcc defaults to -std=c99. gcc and clang default to -std=gnu2x.
   Pascal: Free Pascal (ppcx64). FPC or OFFSIDE_FPC picks the compiler.
+  Zig: zig run. OFFSIDE_ZIG or --cc picks the compiler.
   OFFSIDE_CC or TCC or CC overrides the C compiler.
 `;
 
@@ -85,7 +87,7 @@ export function parseArgs(args: string[]): { ok: true; plan: Plan } | { ok: fals
     }
     if (arg === "--lang" || arg === "-l") {
       const value = group[++i];
-      if (!value) return { ok: false, error: `${arg} needs c, java, javascript, or pascal.` };
+      if (!value) return { ok: false, error: `${arg} needs c, java, javascript, pascal, or zig.` };
       plan.lang = value;
       continue;
     }
@@ -322,6 +324,34 @@ async function runJava(
   }
 }
 
+async function runZig(
+  compiler: string,
+  sourcePath: string,
+  result: LayoutResult,
+  ccFlags: string[],
+  programArgs: string[],
+  keep: boolean,
+  report: boolean,
+): Promise<number> {
+  const dir = mkdtempSync(path.join(tmpdir(), "offside-"));
+  const hostPath = path.join(dir, hostFileName("zig", sourcePath, result.code));
+  try {
+    const rendered = renderHost(result, sourcePath, false);
+    writeFileSync(hostPath, rendered.code);
+    const remap = report
+      ? (text: string) => remapDiagnostics(text, hostPath, sourcePath, rendered.lineMap)
+      : (text: string) => text;
+    const stop = ccFlags.includes("-c");
+    const args = stop
+      ? ["build-exe", hostPath, "-femit-bin=offside-out", ...ccFlags.filter((flag) => flag !== "-c")]
+      : ["run", hostPath, ...ccFlags, "--", ...programArgs];
+    return await spawnMapped(compiler, args, remap, stop ? undefined : dir);
+  } finally {
+    if (keep) process.stderr.write(`kept ${hostPath}\n`);
+    else rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function runJavaScript(
   sourcePath: string,
   result: LayoutResult,
@@ -393,6 +423,9 @@ export async function runPlan(plan: Plan): Promise<number> {
   if (kind.lang === "java") return runJava(sourcePath, result, plan.ccFlags, plan.programArgs, plan.keep, !kind.host);
   if (kind.lang === "pascal") {
     return runPascal(plan.cc ?? defaultPascalCompiler(), sourcePath, result, plan.ccFlags, plan.programArgs, plan.keep, !kind.host);
+  }
+  if (kind.lang === "zig") {
+    return runZig(plan.cc ?? process.env.OFFSIDE_ZIG ?? "zig", sourcePath, result, plan.ccFlags, plan.programArgs, plan.keep, !kind.host);
   }
   return runJavaScript(sourcePath, result, plan.ccFlags, plan.programArgs, plan.keep, !kind.host);
 }

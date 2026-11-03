@@ -74,6 +74,7 @@ const SPACED_EXT: Record<string, LangId> = {
   ".sjava": "java",
   ".sjs": "javascript",
   ".spas": "pascal",
+  ".szig": "zig",
 };
 
 const HOST_EXT: Record<string, LangId> = {
@@ -88,9 +89,10 @@ const HOST_EXT: Record<string, LangId> = {
   ".lpr": "pascal",
   ".dpr": "pascal",
   ".inc": "pascal",
+  ".zig": "zig",
 };
 
-const LANG_IDS = new Set<LangId>(["c", "java", "javascript", "pascal"]);
+const LANG_IDS = new Set<LangId>(["c", "java", "javascript", "pascal", "zig"]);
 
 export interface SourceKind {
   lang: LangId;
@@ -105,13 +107,13 @@ export function classifyFile(file: string, override?: string): SourceKind {
   let lang: LangId;
   if (override) {
     if (!LANG_IDS.has(override as LangId)) {
-      throw new Error(`Unknown language ${override}. Use c, java, javascript, or pascal.`);
+      throw new Error(`Unknown language ${override}. Use c, java, javascript, pascal, or zig.`);
     }
     lang = override as LangId;
   } else if (spaced) lang = spaced;
   else if (host) lang = host;
   else {
-    throw new Error(`Cannot tell the language of ${file}. Use .c/.csp, .java/.sjava, .js/.sjs, .pas/.spas, or pass --lang.`);
+    throw new Error(`Cannot tell the language of ${file}. Use .c/.csp, .java/.sjava, .js/.sjs, .pas/.spas, .zig/.szig, or pass --lang.`);
   }
   return { lang, host: Boolean(host) && !spaced };
 }
@@ -126,5 +128,6 @@ export function hostFileName(lang: LangId, sourcePath: string, code: string): st
   if (lang === "java") return `${javaClassName(code, stem)}.java`;
   if (lang === "javascript") return `${stem}.js`;
   if (lang === "pascal") return `${stem}.pas`;
+  if (lang === "zig") return `${stem}.zig`;
   return `${stem}.c`;
 }

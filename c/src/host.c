@@ -58,6 +58,10 @@ static bool spaced_ext(const char *ext, LangId *lang) {
     *lang = LANG_PASCAL;
     return true;
   }
+  if (ext_is(ext, ".szig")) {
+    *lang = LANG_ZIG;
+    return true;
+  }
   return false;
 }
 
@@ -76,6 +80,10 @@ static bool host_ext(const char *ext, LangId *lang) {
   }
   if (ext_is(ext, ".pas") || ext_is(ext, ".pp") || ext_is(ext, ".lpr") || ext_is(ext, ".dpr") || ext_is(ext, ".inc")) {
     *lang = LANG_PASCAL;
+    return true;
+  }
+  if (ext_is(ext, ".zig")) {
+    *lang = LANG_ZIG;
     return true;
   }
   return false;
@@ -97,7 +105,7 @@ SourceKind classify_file(const char *path, const char *override_lang) {
   if (override_lang != NULL && override_lang[0] != '\0') {
     if (!lang_parse(override_lang, &kind.lang)) {
       kind.ok = false;
-      kind.error = "Unknown language. Use c, java, javascript, or pascal.";
+      kind.error = "Unknown language. Use c, java, javascript, pascal, or zig.";
       return kind;
     }
   } else if (is_spaced) {
@@ -106,7 +114,7 @@ SourceKind classify_file(const char *path, const char *override_lang) {
     kind.lang = host;
   } else {
     kind.ok = false;
-    kind.error = "Cannot tell the language. Use .c/.csp, .java/.sjava, .js/.sjs, .pas/.spas, or pass --lang.";
+    kind.error = "Cannot tell the language. Use .c/.csp, .java/.sjava, .js/.sjs, .pas/.spas, .zig/.szig, or pass --lang.";
     return kind;
   }
   kind.host = is_host && !is_spaced;
@@ -165,6 +173,9 @@ const char *host_file_name(Arena *arena, LangId lang, const char *source_path, c
   }
   if (lang == LANG_PASCAL) {
     return arena_printf(arena, "%s.pas", stem);
+  }
+  if (lang == LANG_ZIG) {
+    return arena_printf(arena, "%s.zig", stem);
   }
   return arena_printf(arena, "%s.c", stem);
 }
