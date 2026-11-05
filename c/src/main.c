@@ -36,16 +36,18 @@ static const char HELP[] =
   "offside emit <file> [--plain]\n"
   "offside space <file>\n"
   "\n"
-  "  .csp .sjava .sjs .spas     spaced source\n"
-  "  .c .h .java .js            host C, Java, JavaScript\n"
+  "  .csp .sjava .sjs .spas .szig .skt   spaced source\n"
+  "  .c .h .java .js .zig .kt       host C, Java, JavaScript, Zig, Kotlin\n"
   "  .pas .pp .lpr .dpr .inc    host Pascal\n"
   "\n"
   "  offside run hello.csp -- -O2\n"
   "  offside emit hello.csp\n"
   "  offside space hello.c\n"
   "  offside run demo.spas\n"
+  "  offside run demo.szig\n"
+  "  offside run demo.skt\n"
   "\n"
-  "  --lang c|java|javascript|pascal|zig   ignore the extension\n"
+  "  --lang c|java|javascript|pascal|zig|kotlin   ignore the extension\n"
   "  --cc <compiler>            C compiler, else tcc or cc\n"
   "  --keep                     leave the host file on disk\n"
   "  --plain                    emit host code without #line\n"
@@ -57,6 +59,8 @@ static const char HELP[] =
   "\n"
   "  C: tcc defaults to -std=c99. gcc and clang default to -std=gnu2x.\n"
   "  Pascal: Free Pascal (ppcx64). FPC or OFFSIDE_FPC picks the compiler.\n"
+  "  Zig: zig run. OFFSIDE_ZIG or --cc picks the compiler.\n"
+  "  Kotlin: kotlinc, then java -jar. OFFSIDE_KOTLIN or --cc picks kotlinc.\n"
   "  OFFSIDE_CC or TCC or CC overrides the C compiler.\n";
 
 typedef struct ArgList {
@@ -829,6 +833,58 @@ static int run_zig(Arena *arena, const char *compiler, const char *source_path, 
   return code;
 }
 
+static int run_kotlin(Arena *arena, const char *compiler, const char *source_path, const Result *result, const ArgList *cc_flags,
+                      const ArgList *program_args, bool keep, bool report) {
+  char *dir = make_temp();
+  char *host_path;
+  char *jar;
+  HostFile rendered;
+  ArgList args;
+  int code;
+  size_t i;
+  bool stop;
+  if (dir == NULL) {
+    return 1;
+  }
+  host_path = arena_printf(arena, "%s%c%s", dir, DIR_SEP, host_file_name(arena, LANG_KOTLIN, source_path, result->code));
+  jar = arena_printf(arena, "%s%coffside-out.jar", dir, DIR_SEP);
+  render_host(arena, result, source_path, false, &rendered);
+  if (write_text(host_path, rendered.code) != 0) {
+    free(dir);
+    return 1;
+  }
+  stop = flag_is(cc_flags, "-c");
+  memset(&args, 0, sizeof args);
+  args_push(&args, "-include-runtime");
+  args_push(&args, "-d");
+  args_push(&args, jar);
+  for (i = 0; i < cc_flags->len; i++) {
+    if (strcmp(cc_flags->items[i], "-c") != 0) {
+      args_push(&args, cc_flags->items[i]);
+    }
+  }
+  args_push(&args, host_path);
+  code = run_tool(compiler, &args, NULL, arena, host_path, source_path, &rendered, report);
+  args_free(&args);
+  if (code == 0 && !stop) {
+    memset(&args, 0, sizeof args);
+    args_push(&args, "-jar");
+    args_push(&args, jar);
+    for (i = 0; i < program_args->len; i++) {
+      args_push(&args, program_args->items[i]);
+    }
+    code = run_tool("java", &args, NULL, arena, host_path, source_path, &rendered, report);
+    args_free(&args);
+  }
+  if (keep) {
+    fprintf(stderr, "kept %s\n", host_path);
+  } else {
+    rm_tree(dir);
+  }
+  free(dir);
+  return code;
+}
+
 static int parse_plan(int argc, char **argv, Plan *plan, const char **error) {
   int i;
   int groups = 1;
@@ -869,7 +925,7 @@ static int parse_plan(int argc, char **argv, Plan *plan, const char **error) {
       }
       if (strcmp(argv[i], "--lang") == 0 || strcmp(argv[i], "-l") == 0) {
         if (i + 1 >= argc) {
-          *error = "--lang needs c, java, javascript, pascal, or zig.";
+          *error = "--lang needs c, java, javascript, pascal, zig, or kotlin.";
           return 2;
         }
         plan->lang = argv[++i];
@@ -981,6 +1037,10 @@ static int execute(Plan *plan) {
     const char *zig = plan->cc != NULL ? plan->cc : getenv("OFFSIDE_ZIG");
     code = run_zig(scratch, zig != NULL && zig[0] != '\0' ? zig : "zig", plan->file, &laid,
                    &plan->cc_flags, &plan->program_args, plan->keep, !kind.host);
+  } else if (kind.lang == LANG_KOTLIN) {
+    const char *kotlinc = plan->cc != NULL ? plan->cc : getenv("OFFSIDE_KOTLIN");
+    code = run_kotlin(scratch, kotlinc != NULL && kotlinc[0] != '\0' ? kotlinc : "kotlinc", plan->file, &laid,
+                      &plan->cc_flags, &plan->program_args, plan->keep, !kind.host);
   } else {
     code = run_javascript(scratch, plan->file, &laid, &plan->cc_flags, &plan->program_args, plan->keep, !kind.host);
   }

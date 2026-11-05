@@ -11,6 +11,15 @@ const KR_DECL = new Set([
   "struct", "union", "enum", "inline", "_Bool", "_Complex", "_Imaginary",
 ]);
 const HEADER_WORD = /\b(else|do|struct|union|enum|class|interface|record|try|finally)\b/;
+const KOTLIN_HEADER = new Set(["fun", "class", "interface", "object", "init", "constructor", "companion"]);
+const KOTLIN_BREAK = new Set([
+  "fun", "class", "interface", "object", "val", "var", "init", "constructor", "companion",
+  "typealias", "if", "for", "while", "do", "try", "when", "return", "throw", "else", "catch", "finally",
+]);
+const KOTLIN_HANG = new Set([
+  "=", ".", "?.", "?:", "+", "-", "*", "/", "%", "&&", "||", ",", "->", "=>", "(", "[", "{", ":", "?", "!",
+  "==", "!=", "<", ">", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "in", "is", "!in", "!is", "to", "by", "::",
+]);
 
 type Node =
   | { type: "text"; text: string; nest?: boolean }
@@ -115,7 +124,7 @@ class Converter {
       return this.parseTry(i);
     }
     if (tok.text === "else") {
-      if (this.lang === "zig" && this.code[i + 1]?.text === "=>") return this.parseGeneral(i);
+      if (this.lang === "zig" || (this.lang === "kotlin" && this.code[i + 1]?.text === "->")) return this.parseGeneral(i);
       return this.parseElse(i);
     }
     if (tok.text === "finally") return this.parseFinally(i);
@@ -362,11 +371,15 @@ class Converter {
          macro into a header and drops the body out of the block. */
       if (
         this.lang !== "zig" &&
+        this.lang !== "kotlin" &&
         j > i &&
         paren === 0 &&
         bracket === 0 &&
         (CONTROL.has(tok.text) || tok.text === "else" || tok.text === "do" || tok.text === "try" || tok.text === "finally")
       ) {
+        break;
+      }
+      if (this.lang === "kotlin" && j > i && paren === 0 && bracket === 0 && this.kotlinLineBreak(j)) {
         break;
       }
 
@@ -415,7 +428,7 @@ class Converter {
       else if (tok.text === "=" && paren === 0 && bracket === 0) sawEq = true;
       else if (tok.text === "{" && paren === 0 && bracket === 0) {
         const role = this.braceRole(j);
-        const krBody = this.lang !== "zig" && !sawEq && fnClose >= 0 && j > fnClose + 1 && this.krBody(fnClose, j);
+        const krBody = this.lang !== "zig" && this.lang !== "kotlin" && !sawEq && fnClose >= 0 && j > fnClose + 1 && this.krBody(fnClose, j);
         if (role === "colon" || krBody) {
           if (items.length === 0) return this.finishColon(i, j);
           const colon = this.finishColon(i, j);
@@ -438,11 +451,16 @@ class Converter {
         const node = nodes.length === 1 ? nodes[0]! : { type: "group" as const, nodes };
         return { node, next: j + 1, end: this.offsetAfter(j + 1) };
       } else if (tok.text === ";" && paren === 0 && bracket === 0) {
-        if (!sawEq && fnClose >= 0 && j > fnClose + 1 && this.krDecl(fnClose, j) && this.krContinues(j)) {
+        if (this.lang !== "kotlin" && !sawEq && fnClose >= 0 && j > fnClose + 1 && this.krDecl(fnClose, j) && this.krContinues(j)) {
           j++;
           continue;
         }
         pushText(j - 1);
+        if (this.lang === "kotlin" && this.kotlinEnumSemi(j)) {
+          const kept = items[items.length - 1];
+          if (kept && kept.kind === "text") kept.text = `${kept.text.replace(/\s+$/, "")};`;
+          else items.push({ kind: "text", text: ";" });
+        }
         const prev = this.code[j - 1];
         if (prev && this.hasDirectiveBetween(prev.end, tok.start)) {
           const last = items[items.length - 1];
@@ -482,6 +500,7 @@ class Converter {
     }
     let next = close + 1;
     if (this.lang === "zig" && this.code[next]?.text === ",") next++;
+    if (this.lang === "kotlin" && this.kotlinEnumConstant(brace) && this.code[next]?.text === ",") next++;
     const aggregate = this.lang === "c" && this.hasAggregate(start, brace);
     let tail = "";
     if (aggregate && this.code[next] && this.code[next]!.text !== ";" && this.code[next]!.text !== "}") {
@@ -545,6 +564,9 @@ class Converter {
         nest++;
       } else if (tok.text === "}" && nest > 0) nest--;
       else if (paren === 0 && bracket === 0 && nest === 0 && tok.kind === "keyword" && tok.text === "fn") return false;
+      else if (this.lang === "kotlin" && paren === 0 && bracket === 0 && nest === 0 && tok.text === ";" && this.code[k + 1]?.kind === "keyword") {
+        return false;
+      }
     }
     return true;
   }
@@ -617,7 +639,12 @@ class Converter {
         const lead = (node.lead ?? []).flatMap((child) => this.render(child, indent));
         if (lead.length === 0 && node.where === "inline") lines[lines.length - 1] = `${lines[lines.length - 1]!.replace(/[ \t]+$/, "")}:`;
         else if (lead.length > 0 || node.where === "own") lines.push(...lead, `${" ".repeat(indent)}:`);
-        const body = node.body.flatMap((child) => this.render(child, indent + 4));
+        const bodyIndent = (() => {
+          const last = lines[lines.length - 1] ?? "";
+          const lastIndent = (last.match(/^[ ]*/) ?? [""])[0].length;
+          return lastIndent >= indent + 4 ? lastIndent + 4 : indent + 4;
+        })();
+        const body = node.body.flatMap((child) => this.render(child, bodyIndent));
         const tail = node.tail ? reindent(node.tail, indent) : [];
         const follow = node.follow ? reindent(node.follow, indent) : [];
         return [...lines, ...body, ...tail, ...follow];
@@ -654,6 +681,7 @@ class Converter {
       const zig = this.zigBrace(index);
       if (zig) return zig;
     }
+    if (this.lang === "kotlin") return this.kotlinBrace(index);
     const prev = this.code[index - 1];
     if (!prev) return "keep";
     if (prev.text === "=" || prev.text === "," || prev.text === "{") return "init";
@@ -675,6 +703,160 @@ class Converter {
     }
     if (this.looksLikeAggregate(index)) return "colon";
     return "keep";
+  }
+
+  kotlinBrace(index: number): "init" | "expr" | "colon" | "keep" {
+    const prev = this.code[index - 1];
+    if (!prev) return "keep";
+    if (prev.text === "=" || prev.text === "," || prev.text === "{") return "init";
+    if (prev.text === "->") return "colon";
+    if ((prev.kind === "ident" || prev.text === ")") && this.kotlinEnumConstant(index)) return "colon";
+    if (prev.text === ")") {
+      const open = this.matchBack(index - 1, ")", "(");
+      const before = open > 0 ? this.code[open - 1] : undefined;
+      const call = before?.text ?? "";
+      if (call === "when") return "colon";
+      if (["if", "for", "while"].includes(call) && this.kotlinStmtHead(open)) return "colon";
+      if (call === "fun" || call === "constructor" || this.kotlinSees(open, KOTLIN_HEADER)) return "colon";
+      return "keep";
+    }
+    if (["else", "do", "finally", "init", "object", "class", "interface", "fun", "when"].includes(prev.text)) return "colon";
+    if (prev.text === "try") return this.kotlinStmtHead(index) ? "colon" : "keep";
+    if (this.kotlinSees(index, KOTLIN_HEADER)) return "colon";
+    return "keep";
+  }
+
+  /** `{` after an enum constant (`RED { ... }` or `RED(1) { ... }`), not a trailing lambda. */
+  kotlinEnumConstant(index: number): boolean {
+    const prev = this.code[index - 1];
+    if (!prev || (prev.kind !== "ident" && prev.text !== ")")) return false;
+    let paren = 0;
+    let bracket = 0;
+    let nest = 0;
+    for (let k = index - 1; k >= 0; k--) {
+      const tok = this.code[k];
+      if (!tok) continue;
+      if (tok.text === ")") paren++;
+      else if (tok.text === "(") {
+        if (paren === 0) return false;
+        paren--;
+      } else if (tok.text === "]") bracket++;
+      else if (tok.text === "[") {
+        if (bracket === 0) return false;
+        bracket--;
+      } else if (tok.text === "}") nest++;
+      else if (tok.text === "{") {
+        if (nest > 0) {
+          nest--;
+          continue;
+        }
+        if (paren !== 0 || bracket !== 0) return false;
+        return this.enumHeaderBefore(k);
+      } else if (paren === 0 && bracket === 0 && nest === 0) {
+        if (
+          tok.text === "," ||
+          tok.text === "." ||
+          tok.text === ":" ||
+          tok.text === "@" ||
+          tok.text === "?" ||
+          tok.kind === "ident" ||
+          tok.kind === "number" ||
+          tok.kind === "string"
+        ) {
+          continue;
+        }
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /** The `{` at `brace` opens an enum body (`enum class Color {`). */
+  enumHeaderBefore(brace: number): boolean {
+    let paren = 0;
+    for (let k = brace - 1; k >= 0; k--) {
+      const tok = this.code[k];
+      if (!tok) continue;
+      if (tok.text === ")") paren++;
+      else if (tok.text === "(") {
+        if (paren === 0) return false;
+        paren--;
+      } else if (paren === 0) {
+        if (tok.text === "{" || tok.text === "}" || tok.text === ";") return false;
+        if (tok.kind === "keyword" && tok.text === "enum") return true;
+      }
+    }
+    return false;
+  }
+
+  /** True when a header word sits before this brace. Parameter lists do not hide `fun`. Stops at `=`, `;`, `{`, or `}`. */
+  kotlinSees(from: number, words: ReadonlySet<string>): boolean {
+    let paren = 0;
+    let bracket = 0;
+    for (let k = from - 1; k >= 0; k--) {
+      const tok = this.code[k];
+      if (!tok) continue;
+      if (tok.text === ")") paren++;
+      else if (tok.text === "(") {
+        if (paren === 0) continue;
+        paren--;
+      } else if (tok.text === "]") bracket++;
+      else if (tok.text === "[") {
+        if (bracket === 0) continue;
+        bracket--;
+      } else if (paren === 0 && bracket === 0) {
+        if (tok.text === "=" || tok.text === ";" || tok.text === "{" || tok.text === "}" || tok.text === "." || tok.text === "?.") return false;
+        if (tok.kind === "keyword" && words.has(tok.text)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** The keyword before `(` (or before `{` for `try`) starts a statement, not `val x = if`. */
+  kotlinStmtHead(open: number): boolean {
+    let paren = 0;
+    let bracket = 0;
+    for (let k = open - 2; k >= 0; k--) {
+      const tok = this.code[k];
+      if (!tok) continue;
+      if (tok.text === ")") paren++;
+      else if (tok.text === "(") {
+        if (paren === 0) return false;
+        paren--;
+      } else if (tok.text === "]") bracket++;
+      else if (tok.text === "[") {
+        if (bracket === 0) return false;
+        bracket--;
+      } else if (paren === 0 && bracket === 0) {
+        if (tok.text === "@") continue;
+        if (tok.text === ";" || tok.text === "{" || tok.text === "}") return true;
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** A newline ends a Kotlin statement when the next line starts a new one and the previous token does not hang. */
+  kotlinLineBreak(j: number): boolean {
+    const tok = this.code[j];
+    const prev = this.code[j - 1];
+    if (!tok || !prev) return false;
+    if (tok.line <= prev.line) return false;
+    if (!KOTLIN_BREAK.has(tok.text)) return false;
+    if ((tok.text === "catch" || tok.text === "finally" || tok.text === "else") && prev.text === "}") return false;
+    return !KOTLIN_HANG.has(prev.text);
+  }
+
+  /** Keep the semicolon that ends a Kotlin enum entry list (`BLUE; fun paint`). */
+  kotlinEnumSemi(semi: number): boolean {
+    const prev = this.code[semi - 1];
+    const next = this.code[semi + 1];
+    if (!prev || !next) return false;
+    if (!(prev.kind === "ident" || prev.text === ")" || prev.text === "}")) return false;
+    return (
+      next.kind === "keyword" &&
+      ["fun", "val", "var", "class", "init", "companion", "constructor", "object", "override", "const"].includes(next.text)
+    );
   }
 
   zigBrace(index: number): "init" | "expr" | "colon" | "keep" | null {
@@ -702,7 +884,10 @@ class Converter {
     if (close < 0) return false;
     const next = this.code[close + 1];
     if (!next) return false;
-    return next.text !== ";" && next.text !== ",";
+    if (next.text === ";" || next.text === ",") return false;
+    // `} align(4);` is the container's suffix, not a type that continues.
+    if (next.text === "align" || next.text === "addrspace" || next.text === "linksection" || next.text === "callconv") return false;
+    return true;
   }
 
   /** A comma ends a Zig statement unless it sits in a same-line switch item (`0, 1 =>`). */
@@ -871,7 +1056,7 @@ class Converter {
   }
 
   colonWhere(brace: number, header: string): "inline" | "own" {
-    if (this.lang === "zig") return "inline";
+    if (this.lang === "zig" || this.lang === "kotlin") return "inline";
     const prev = this.code[brace - 1];
     if (prev && (prev.text === ")" || prev.text === "=>")) return "inline";
     const last = header.split("\n").pop() ?? "";
@@ -881,7 +1066,7 @@ class Converter {
   isLabel(i: number): boolean {
     const tok = this.code[i];
     const colon = this.code[i + 1];
-    if (this.lang === "zig") return false;
+    if (this.lang === "zig" || this.lang === "kotlin") return false;
     return !!tok && tok.kind === "ident" && colon?.text === ":";
   }
 
@@ -1274,7 +1459,7 @@ function reindent(text: string, indent: number, anchor: "min" | "first" = "min",
     if (!line.trim()) return "";
     const width = (line.match(/^[ ]*/) ?? [""])[0].length;
     const extra = Math.max(0, width - base);
-    const step = nest && seen > 0 && extra === 0 ? 4 : 0;
+    const step = nest && seen > 0 && extra === 0 && !/^}+[;,]*$/.test(line.trim()) ? 4 : 0;
     // A continuation sliced from the host already includes its absolute column.
     // Adding the block indent on top of that column walks the line right on every trip.
     const sum = indent + step + extra;

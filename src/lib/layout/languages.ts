@@ -62,7 +62,7 @@ const ZIG_KEYWORDS = [
   "else", "enum", "errdefer", "error", "export", "extern", "fn", "for", "if",
   "inline", "linksection", "noalias", "noinline", "nosuspend", "opaque", "or",
   "orelse", "packed", "pub", "resume", "return", "struct", "suspend", "switch",
-  "test", "threadlocal", "try", "union", "unreachable", "var", "volatile", "while",
+  "test", "threadlocal", "try", "union", "unreachable", "usingnamespace", "var", "volatile", "while",
 ];
 
 const C_PROGRAM = `#include <stdio.h>
@@ -204,6 +204,55 @@ const ZIG_EDGES = `pub fn pick(n: i32) i32:
         0 => 0,
         1 => x,
         else => n
+`;
+
+const KOTLIN_KEYWORDS = [
+  "abstract", "actual", "annotation", "as", "break", "by", "catch", "class",
+  "companion", "const", "constructor", "continue", "crossinline", "data", "do",
+  "else", "enum", "expect", "external", "false", "finally", "for", "fun", "get",
+  "if", "import", "in", "infix", "init", "inline", "inner", "interface",
+  "internal", "is", "lateinit", "noinline", "null", "object", "open", "operator",
+  "out", "override", "package", "private", "protected", "public", "reified",
+  "return", "sealed", "set", "super", "suspend", "tailrec", "this", "throw",
+  "true", "try", "typealias", "val", "value", "var", "vararg", "when", "where",
+  "while",
+];
+
+const KOTLIN_PROGRAM = `fun greet(name: String?): String:
+    if (name == null || name.isEmpty()):
+        return "hello"
+    return "hello, $name"
+
+fun main():
+    println(greet("ada"))
+    val items = listOf("layout", "tokens")
+    val n = items.map { it.length }.sum()
+    val label = when (items.size):
+        0 -> "empty"
+        1 -> "one"
+        else -> "many"
+    println(n)
+    println(label)
+`;
+
+const KOTLIN_EDGES = `class Box:
+    var n: Int = 0
+    fun bump(): Int:
+        n += 1
+        return n
+
+fun pick(flag: Boolean?): Int:
+    val on = flag ?: false
+    val word = "sum is \${1 + 1}"
+    return if (on) word.length else 0
+
+fun counter(): Int:
+    val box = object:
+        var n = 0
+        fun bump(): Int:
+            n += 1
+            return n
+    return box.bump()
 `;
 
 const PASCAL_PROGRAM = `{$mode objfpc}{$H+}
@@ -349,6 +398,23 @@ export const PROFILES: Record<LangId, Profile> = {
       { id: "edges", label: "Edges", source: ZIG_EDGES },
     ],
   ),
+  kotlin: profile(
+    "kotlin",
+    "Kotlin",
+    "out.kt",
+    KOTLIN_KEYWORDS,
+    { preprocessor: false, templates: false, regex: false, semiClose: [] },
+    {
+      cue: "A trailing colon opens a block. fun, class, when, if, and object use it. A line that ends in -> can too",
+      terminator: "Semicolon on a finished line. Kotlin treats that semicolon as optional, so the compiler still accepts it",
+      semiClose: "Blocks close with }. A when, object, or other value block closes with };",
+      transparent: "No preprocessor. \" and \"\"\" strings keep $ templates inside the string. ?: is elvis, not a ternary. Lambdas and trailing lambdas stay in braces",
+    },
+    [
+      { id: "program", label: "Program", source: KOTLIN_PROGRAM },
+      { id: "edges", label: "Edges", source: KOTLIN_EDGES },
+    ],
+  ),
 };
 
-export const LANGS: LangId[] = ["c", "java", "javascript", "pascal", "zig"];
+export const LANGS: LangId[] = ["c", "java", "javascript", "pascal", "zig", "kotlin"];

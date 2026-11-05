@@ -61,7 +61,19 @@ static const char *const ZIG_KEYWORDS[] = {
   "else", "enum", "errdefer", "error", "export", "extern", "fn", "for", "if",
   "inline", "linksection", "noalias", "noinline", "nosuspend", "opaque", "or",
   "orelse", "packed", "pub", "resume", "return", "struct", "suspend", "switch",
-  "test", "threadlocal", "try", "union", "unreachable", "var", "volatile", "while",
+  "test", "threadlocal", "try", "union", "unreachable", "usingnamespace", "var", "volatile", "while",
+};
+
+static const char *const KOTLIN_KEYWORDS[] = {
+  "abstract", "actual", "annotation", "as", "break", "by", "catch", "class",
+  "companion", "const", "constructor", "continue", "crossinline", "data", "do",
+  "else", "enum", "expect", "external", "false", "finally", "for", "fun", "get",
+  "if", "import", "in", "infix", "init", "inline", "inner", "interface",
+  "internal", "is", "lateinit", "noinline", "null", "object", "open", "operator",
+  "out", "override", "package", "private", "protected", "public", "reified",
+  "return", "sealed", "set", "super", "suspend", "tailrec", "this", "throw",
+  "true", "try", "typealias", "val", "value", "var", "vararg", "when", "where",
+  "while",
 };
 
 static const char *const C_SEMI[] = { "struct", "union", "enum" };
@@ -73,10 +85,11 @@ static const Profile PROFILES[] = {
   { LANG_JAVASCRIPT, JS_KEYWORDS, sizeof JS_KEYWORDS / sizeof JS_KEYWORDS[0], NULL, 0, false, true, true },
   { LANG_PASCAL, PASCAL_KEYWORDS, sizeof PASCAL_KEYWORDS / sizeof PASCAL_KEYWORDS[0], NULL, 0, false, false, false },
   { LANG_ZIG, ZIG_KEYWORDS, sizeof ZIG_KEYWORDS / sizeof ZIG_KEYWORDS[0], ZIG_SEMI, 5, false, false, false },
+  { LANG_KOTLIN, KOTLIN_KEYWORDS, sizeof KOTLIN_KEYWORDS / sizeof KOTLIN_KEYWORDS[0], NULL, 0, false, false, false },
 };
 
 const Profile *profile_get(LangId lang) {
-  if (lang > LANG_ZIG) {
+  if (lang > LANG_KOTLIN) {
     return &PROFILES[0];
   }
   return &PROFILES[lang];
@@ -131,6 +144,10 @@ bool lang_parse(const char *text, LangId *out) {
   }
   if (strcmp(text, "zig") == 0) {
     *out = LANG_ZIG;
+    return true;
+  }
+  if (strcmp(text, "kotlin") == 0) {
+    *out = LANG_KOTLIN;
     return true;
   }
   return false;

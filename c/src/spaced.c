@@ -1418,7 +1418,13 @@ static bool container_brace_is_inline(Converter *cv, int brace) {
   if (next == NULL) {
     return false;
   }
-  return !tok_is(next, ";") && !tok_is(next, ",");
+  if (tok_is(next, ";") || tok_is(next, ",")) {
+    return false;
+  }
+  if (tok_is(next, "align") || tok_is(next, "addrspace") || tok_is(next, "linksection") || tok_is(next, "callconv")) {
+    return false;
+  }
+  return true;
 }
 
 static bool zig_comma_ends(const Converter *cv, int comma) {
@@ -1484,6 +1490,11 @@ static bool list_body(const Converter *cv, int brace, int close) {
       nest--;
     } else if (paren == 0 && bracket == 0 && nest == 0 && tok->kind == TOK_KEYWORD && tok_is(tok, "fn")) {
       return false;
+    } else if (cv->lang == LANG_KOTLIN && paren == 0 && bracket == 0 && nest == 0 && tok_is(tok, ";")) {
+      const Tok *next = code_at(cv, k + 1);
+      if (next != NULL && next->kind == TOK_KEYWORD) {
+        return false;
+      }
     }
   }
   return true;
@@ -1527,10 +1538,248 @@ static BraceRole zig_brace(const Converter *cv, int index) {
   return ROLE_KEEP;
 }
 
+static const char *const KOTLIN_HEADER[] = { "fun", "class", "interface", "object", "init", "constructor", "companion" };
+static const char *const KOTLIN_BREAK[] = {
+  "fun", "class", "interface", "object", "val", "var", "init", "constructor", "companion",
+  "typealias", "if", "for", "while", "do", "try", "when", "return", "throw", "else", "catch", "finally",
+};
+static const char *const KOTLIN_HANG[] = {
+  "=", ".", "?.", "?:", "+", "-", "*", "/", "%", "&&", "||", ",", "->", "=>", "(", "[", "{", ":", "?", "!",
+  "==", "!=", "<", ">", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "in", "is", "!in", "!is", "to", "by", "::",
+};
+
+static bool kotlin_sees(const Converter *cv, int from, const char *const *words, size_t nwords) {
+  int paren = 0;
+  int bracket = 0;
+  int k;
+  for (k = from - 1; k >= 0; k--) {
+    const Tok *tok = code_at(cv, k);
+    if (tok == NULL) {
+      continue;
+    }
+    if (tok_is(tok, ")")) {
+      paren++;
+    } else if (tok_is(tok, "(")) {
+      if (paren == 0) {
+        continue;
+      }
+      paren--;
+    } else if (tok_is(tok, "]")) {
+      bracket++;
+    } else if (tok_is(tok, "[")) {
+      if (bracket == 0) {
+        continue;
+      }
+      bracket--;
+    } else if (paren == 0 && bracket == 0) {
+      if (tok_is(tok, "=") || tok_is(tok, ";") || tok_is(tok, "{") || tok_is(tok, "}") || tok_is(tok, ".") || tok_is(tok, "?.")) {
+        return false;
+      }
+      if (tok->kind == TOK_KEYWORD && tok_in(tok, words, nwords)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static bool kotlin_stmt_head(const Converter *cv, int open) {
+  int paren = 0;
+  int bracket = 0;
+  int k;
+  for (k = open - 2; k >= 0; k--) {
+    const Tok *tok = code_at(cv, k);
+    if (tok == NULL) {
+      continue;
+    }
+    if (tok_is(tok, ")")) {
+      paren++;
+    } else if (tok_is(tok, "(")) {
+      if (paren == 0) {
+        return false;
+      }
+      paren--;
+    } else if (tok_is(tok, "]")) {
+      bracket++;
+    } else if (tok_is(tok, "[")) {
+      if (bracket == 0) {
+        return false;
+      }
+      bracket--;
+    } else if (paren == 0 && bracket == 0) {
+      if (tok_is(tok, "@")) {
+        continue;
+      }
+      if (tok_is(tok, ";") || tok_is(tok, "{") || tok_is(tok, "}")) {
+        return true;
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool kotlin_enum_header_before(const Converter *cv, int brace) {
+  int paren = 0;
+  int k;
+  for (k = brace - 1; k >= 0; k--) {
+    const Tok *tok = code_at(cv, k);
+    if (tok == NULL) {
+      continue;
+    }
+    if (tok_is(tok, ")")) {
+      paren++;
+    } else if (tok_is(tok, "(")) {
+      if (paren == 0) {
+        return false;
+      }
+      paren--;
+    } else if (paren == 0) {
+      if (tok_is(tok, "{") || tok_is(tok, "}") || tok_is(tok, ";")) {
+        return false;
+      }
+      if (tok->kind == TOK_KEYWORD && tok_is(tok, "enum")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static bool kotlin_enum_constant(const Converter *cv, int index) {
+  const Tok *prev = code_at(cv, index - 1);
+  int paren = 0;
+  int bracket = 0;
+  int nest = 0;
+  int k;
+  if (prev == NULL || !(prev->kind == TOK_IDENT || tok_is(prev, ")"))) {
+    return false;
+  }
+  for (k = index - 1; k >= 0; k--) {
+    const Tok *tok = code_at(cv, k);
+    if (tok == NULL) {
+      continue;
+    }
+    if (tok_is(tok, ")")) {
+      paren++;
+    } else if (tok_is(tok, "(")) {
+      if (paren == 0) {
+        return false;
+      }
+      paren--;
+    } else if (tok_is(tok, "]")) {
+      bracket++;
+    } else if (tok_is(tok, "[")) {
+      if (bracket == 0) {
+        return false;
+      }
+      bracket--;
+    } else if (tok_is(tok, "}")) {
+      nest++;
+    } else if (tok_is(tok, "{")) {
+      if (nest > 0) {
+        nest--;
+        continue;
+      }
+      if (paren != 0 || bracket != 0) {
+        return false;
+      }
+      return kotlin_enum_header_before(cv, k);
+    } else if (paren == 0 && bracket == 0 && nest == 0) {
+      if (tok_is(tok, ",") || tok_is(tok, ".") || tok_is(tok, ":") || tok_is(tok, "@") || tok_is(tok, "?")
+          || tok->kind == TOK_IDENT || tok->kind == TOK_NUMBER || tok->kind == TOK_STRING) {
+        continue;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+static bool kotlin_line_break(const Converter *cv, int j) {
+  const Tok *tok = code_at(cv, j);
+  const Tok *prev = code_at(cv, j - 1);
+  if (tok == NULL || prev == NULL) {
+    return false;
+  }
+  if (tok->line <= prev->line) {
+    return false;
+  }
+  if (!tok_in(tok, KOTLIN_BREAK, sizeof KOTLIN_BREAK / sizeof KOTLIN_BREAK[0])) {
+    return false;
+  }
+  if ((tok_is(tok, "catch") || tok_is(tok, "finally") || tok_is(tok, "else")) && tok_is(prev, "}")) {
+    return false;
+  }
+  return !tok_in(prev, KOTLIN_HANG, sizeof KOTLIN_HANG / sizeof KOTLIN_HANG[0]);
+}
+
+static bool kotlin_enum_semi(const Converter *cv, int semi) {
+  const Tok *prev = code_at(cv, semi - 1);
+  const Tok *next = code_at(cv, semi + 1);
+  if (prev == NULL || next == NULL || next->kind != TOK_KEYWORD) {
+    return false;
+  }
+  if (!(prev->kind == TOK_IDENT || tok_is(prev, ")") || tok_is(prev, "}"))) {
+    return false;
+  }
+  return tok_is(next, "fun") || tok_is(next, "val") || tok_is(next, "var") || tok_is(next, "class")
+    || tok_is(next, "init") || tok_is(next, "companion") || tok_is(next, "constructor") || tok_is(next, "object")
+    || tok_is(next, "override") || tok_is(next, "const");
+}
+
+static BraceRole kotlin_brace(const Converter *cv, int index) {
+  const Tok *prev = code_at(cv, index - 1);
+  const Tok *before;
+  const char *call;
+  int open;
+  if (prev == NULL) {
+    return ROLE_KEEP;
+  }
+  if (tok_is(prev, "=") || tok_is(prev, ",") || tok_is(prev, "{")) {
+    return ROLE_INIT;
+  }
+  if (tok_is(prev, "->")) {
+    return ROLE_COLON;
+  }
+  if ((prev->kind == TOK_IDENT || tok_is(prev, ")")) && kotlin_enum_constant(cv, index)) {
+    return ROLE_COLON;
+  }
+  if (tok_is(prev, ")")) {
+    open = match_back(cv, index - 1, ")", "(");
+    before = open > 0 ? code_at(cv, open - 1) : NULL;
+    call = before != NULL && before->text != NULL ? before->text : "";
+    if (tok_is(before, "when")) {
+      return ROLE_COLON;
+    }
+    if ((strcmp(call, "if") == 0 || strcmp(call, "for") == 0 || strcmp(call, "while") == 0) && kotlin_stmt_head(cv, open)) {
+      return ROLE_COLON;
+    }
+    if (tok_is(before, "fun") || tok_is(before, "constructor") || kotlin_sees(cv, open, KOTLIN_HEADER, sizeof KOTLIN_HEADER / sizeof KOTLIN_HEADER[0])) {
+      return ROLE_COLON;
+    }
+    return ROLE_KEEP;
+  }
+  if (tok_is(prev, "else") || tok_is(prev, "do") || tok_is(prev, "finally") || tok_is(prev, "init") || tok_is(prev, "object")
+      || tok_is(prev, "class") || tok_is(prev, "interface") || tok_is(prev, "fun") || tok_is(prev, "when")) {
+    return ROLE_COLON;
+  }
+  if (tok_is(prev, "try")) {
+    return kotlin_stmt_head(cv, index) ? ROLE_COLON : ROLE_KEEP;
+  }
+  if (kotlin_sees(cv, index, KOTLIN_HEADER, sizeof KOTLIN_HEADER / sizeof KOTLIN_HEADER[0])) {
+    return ROLE_COLON;
+  }
+  return ROLE_KEEP;
+}
+
 static BraceRole brace_role(Converter *cv, int index) {
   const Tok *prev;
   if (cv->lang == LANG_ZIG) {
     return zig_brace(cv, index);
+  }
+  if (cv->lang == LANG_KOTLIN) {
+    return kotlin_brace(cv, index);
   }
   prev = code_at(cv, index - 1);
   if (prev == NULL) {
@@ -1756,7 +2005,7 @@ static Str last_line(Str s) {
 
 static ColonWhere colon_where(const Converter *cv, int brace, Str header) {
   const Tok *prev;
-  if (cv->lang == LANG_ZIG) {
+  if (cv->lang == LANG_ZIG || cv->lang == LANG_KOTLIN) {
     (void)header;
     (void)brace;
     return WHERE_INLINE;
@@ -1771,7 +2020,7 @@ static ColonWhere colon_where(const Converter *cv, int brace, Str header) {
 static bool is_label(const Converter *cv, int i) {
   const Tok *tok = code_at(cv, i);
   const Tok *colon = code_at(cv, i + 1);
-  if (cv->lang == LANG_ZIG) {
+  if (cv->lang == LANG_ZIG || cv->lang == LANG_KOTLIN) {
     return false;
   }
   return tok != NULL && tok->kind == TOK_IDENT && tok_is(colon, ":");
@@ -2529,6 +2778,9 @@ static Parsed finish_colon(Converter *cv, int start, int brace) {
     if (cv->lang == LANG_ZIG && tok_is(code_at(cv, next), ",")) {
       next++;
     }
+    if (cv->lang == LANG_KOTLIN && kotlin_enum_constant(cv, brace) && tok_is(code_at(cv, next), ",")) {
+      next++;
+    }
     if (is_enum && list_body(cv, brace, close)) {
       NodeVec items = enum_items(cv, brace, close);
       body = vec_concat(cv->arena, &lead, &items);
@@ -2582,8 +2834,11 @@ static Parsed parse_general(Converter *cv, int i) {
     if ((tok_is(tok, "case") || tok_is(tok, "default")) && paren == 0 && bracket == 0 && j > i) {
       break;
     }
-    if (cv->lang != LANG_ZIG && j > i && paren == 0 && bracket == 0
+    if (cv->lang != LANG_ZIG && cv->lang != LANG_KOTLIN && j > i && paren == 0 && bracket == 0
         && (is_control_tok(tok) || tok_is(tok, "else") || tok_is(tok, "do") || tok_is(tok, "try") || tok_is(tok, "finally"))) {
+      break;
+    }
+    if (cv->lang == LANG_KOTLIN && j > i && paren == 0 && bracket == 0 && kotlin_line_break(cv, j)) {
       break;
     }
     if (tok_is(tok, "|")) {
@@ -2650,7 +2905,7 @@ static Parsed parse_general(Converter *cv, int i) {
       saw_eq = true;
     } else if (tok_is(tok, "{") && paren == 0 && bracket == 0) {
       BraceRole role = brace_role(cv, j);
-      bool kr = cv->lang != LANG_ZIG && !saw_eq && fn_close >= 0 && j > fn_close + 1 && kr_body(cv, fn_close, j);
+      bool kr = cv->lang != LANG_ZIG && cv->lang != LANG_KOTLIN && !saw_eq && fn_close >= 0 && j > fn_close + 1 && kr_body(cv, fn_close, j);
       if (role == ROLE_COLON || kr) {
         Parsed colon;
         if (items.len == 0) {
@@ -2691,11 +2946,15 @@ static Parsed parse_general(Converter *cv, int i) {
       return p;
     } else if (tok_is(tok, ";") && paren == 0 && bracket == 0) {
       NodeVec mixed;
-      if (!saw_eq && fn_close >= 0 && j > fn_close + 1 && kr_decl(cv, fn_close, j) && kr_continues(cv, j)) {
+      if (cv->lang != LANG_KOTLIN && !saw_eq && fn_close >= 0 && j > fn_close + 1 && kr_decl(cv, fn_close, j) && kr_continues(cv, j)) {
         j++;
         continue;
       }
       push_text_item(cv, &items, chunk, j - 1);
+      if (cv->lang == LANG_KOTLIN && kotlin_enum_semi(cv, j) && items.len > 0 && !items.items[items.len - 1u].sexpr) {
+        Str last = str_rtrim_ws(items.items[items.len - 1u].text);
+        items.items[items.len - 1u].text = str_join(cv->arena, last, str_lit(";"));
+      }
       {
         const Tok *prev = code_at(cv, j - 1);
         if (prev != NULL && has_directive_between(cv, prev->end, tok->start)) {
@@ -2757,7 +3016,7 @@ static Parsed parse_stmt(Converter *cv, int i) {
     return parse_try(cv, i);
   }
   if (tok_is(tok, "else")) {
-    if (cv->lang == LANG_ZIG && tok_is(code_at(cv, i + 1), "=>")) {
+    if (cv->lang == LANG_ZIG || (cv->lang == LANG_KOTLIN && tok_is(code_at(cv, i + 1), "->"))) {
       return parse_general(cv, i);
     }
     return parse_else(cv, i);
@@ -2966,13 +3225,28 @@ static void reindent(Arena *arena, Str text, int indent, bool anchor_first, bool
       } else {
         size_t w = leading_spaces(cleaned.s + start, len);
         size_t extra = w > base ? w - base : 0;
-        size_t step = nest && seen > 0 && extra == 0 ? 4u : 0u;
+        bool brace_line = false;
+        size_t step;
         size_t c = 0;
         size_t total;
         Str rest;
         while (c < len && rt_is_space(cleaned.s[start + c])) {
           c++;
         }
+        if (c < len && cleaned.s[start + c] == '}') {
+          size_t t = c;
+          while (t < len && cleaned.s[start + t] == '}') {
+            t++;
+          }
+          if (t < len && (cleaned.s[start + t] == ';' || cleaned.s[start + t] == ',')) {
+            t++;
+          }
+          while (t < len && rt_is_space(cleaned.s[start + t])) {
+            t++;
+          }
+          brace_line = t == len;
+        }
+        step = nest && seen > 0 && extra == 0 && !brace_line ? 4u : 0u;
         if ((size_t)ind > SIZE_MAX - extra || (size_t)ind + extra > SIZE_MAX - step) {
           rt_oom();
         }
@@ -3082,11 +3356,22 @@ static void render_node(Converter *cv, const Node *node, int indent, StrVec *out
       }
       {
         size_t k;
+        int body_at = indent + 4;
+        Str last = lines.items[lines.len - 1u];
+        int last_indent = 0;
+        size_t li = 0;
         for (k = 0; k < lines.len; k++) {
           strvec_push(cv->arena, out, lines.items[k]);
         }
+        while (li < last.n && last.s[li] == ' ') {
+          last_indent++;
+          li++;
+        }
+        if (last_indent >= body_at) {
+          body_at = last_indent + 4;
+        }
+        render_children(cv, &node->kids, body_at, out);
       }
-      render_children(cv, &node->kids, indent + 4, out);
       if (node->tail.n > 0) {
         reindent(cv->arena, node->tail, indent, false, false, out);
       }

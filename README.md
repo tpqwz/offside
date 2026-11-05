@@ -21,7 +21,7 @@ C, with gcc `-std=gnu2x`:
 
 - The SQLite amalgamation 3.54.1 round-trips with 0 errors and 0 warnings. The C target is ISO C89 through C23, plus the GNU dialect that gcc and clang share. MSVC, embedded compilers, Objective-C, and C++ are not targets.
 
-Java, JavaScript, and Zig use the same layout engine. They are not the proof. Zig is `.zig` and `.szig`. A trailing colon opens a block, container fields and switch prongs take commas, and `blk:` stays a label. `offside run` calls `zig run` when the Zig compiler is on the path. That call is not a corpus.
+Java, JavaScript, Zig, and Kotlin use the same layout engine. They are not the proof. Zig is `.zig` and `.szig`. Kotlin is `.kt` and `.skt`. A trailing colon opens a block. For Zig, container fields and switch prongs take commas, and `blk:` stays a label. For Kotlin, semicolons are inserted, `?:` stays elvis, string templates stay inside the string, and a lambda stays in braces. `offside run` calls `zig run` or `kotlinc` when that compiler is on the path. That call is not a corpus.
 
 ## Page
 
@@ -69,10 +69,10 @@ offside run demo.spas -o demo  # name the binary, then run it
 
 | Extension | Source |
 | --- | --- |
-| `.csp` `.sjava` `.sjs` `.spas` `.szig` | spaced |
+| `.csp` `.sjava` `.sjs` `.spas` `.szig` `.skt` | spaced |
 | `.c` `.h` | host C |
 | `.pas` `.pp` `.lpr` `.dpr` `.inc` | host Pascal |
-| `.java` `.js` `.zig` | host Java, JavaScript, Zig |
+| `.java` `.js` `.zig` `.kt` | host Java, JavaScript, Zig, Kotlin |
 
 A spaced C fragment:
 

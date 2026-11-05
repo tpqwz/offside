@@ -6,7 +6,7 @@ import type { LangId, LayoutEvent, LayoutNote, LayoutResult, OutLine, OutSegment
 const HANGING = new Set([
   "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "~", "?", ":", ",", ".", "\\",
   "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-  "<<", ">>", ">>>", "->", "=>", "?.", "??", "::", "<<=", ">>=", ">>>=",
+  "<<", ">>", ">>>", "->", "=>", "?.", "?:", "??", "::", "<<=", ">>=", ">>>=",
 ]);
 
 const CONT_START = new Set([
@@ -162,6 +162,8 @@ interface Frame {
   bodyCond: number;
   /** Body begin/end live inside `{$IF}` branches, so the routine must not grow its own. */
   skipShell: boolean;
+  /** Kotlin enum constant with a class body. Closes with `},` or `};`. */
+  kotlinEnumConst?: boolean;
 }
 
 function groupLines(source: string, tokens: Tok[]): LogicalLine[] {
@@ -305,6 +307,11 @@ const HEADER_KEYWORDS = new Set([
   "else", "do", "struct", "union", "enum", "class", "interface", "record", "try", "finally",
 ]);
 
+const KOTLIN_OPEN = new Set([
+  "fun", "class", "interface", "object", "when", "if", "else", "for", "while", "do",
+  "try", "catch", "finally", "init", "constructor", "companion", "where",
+]);
+
 function opensBlock(code: Tok[], blockColon: boolean, labelColon: boolean, lang: LangId): boolean {
   if (!blockColon) return false;
   if (lang === "zig") return true;
@@ -312,6 +319,11 @@ function opensBlock(code: Tok[], blockColon: boolean, labelColon: boolean, lang:
   if (first && (first.text === "case" || first.text === "default")) return false;
   if (code.length === 2 && code[0]?.kind === "ident" && code[1]?.text === ":") return false;
   if (code.length === 1 && code[0]?.text === ":") return !labelColon;
+  if (lang === "kotlin") {
+    const prev = code[code.length - 2];
+    if (prev && (prev.text === ")" || prev.text === "=>" || prev.text === "->")) return true;
+    return code.some((t) => t.kind === "keyword" && KOTLIN_OPEN.has(t.text));
+  }
   const prev = code[code.length - 2];
   if (prev && (prev.text === ")" || prev.text === "=>")) return true;
   return code.some((t) => HEADER_KEYWORDS.has(t.text));
@@ -428,6 +440,7 @@ interface LayoutState {
 }
 
 function braceKindAt(code: Tok[], index: number, hangText: string, lang: LangId): BraceKind {
+  if (lang === "kotlin") return "stmt";
   const prev = code[index - 1];
   if (lang === "zig") {
     if (!prev) return "stmt";
@@ -500,7 +513,7 @@ function classify(line: LogicalLine, state: LayoutState, hangText: string, label
       const kind = braces.pop();
       braceParen.pop();
       if (kind === "init" && braces.at(-1) !== "init") closedInit = true;
-    } else if (t.text === "?" && lang !== "zig") ternary++;
+    } else if (t.text === "?" && lang !== "zig" && lang !== "kotlin") ternary++;
     else if (t.text === ":") {
       const isLast = n === code.length - 1;
       if (ternary > 0) ternary--;
@@ -543,6 +556,11 @@ function zigContainerLine(code: Tok[]): boolean {
   return code.length > 0;
 }
 
+function zigSuffixLine(line: LogicalLine): boolean {
+  const head = codeTokens(line)[0]?.text;
+  return head === "align" || head === "addrspace" || head === "linksection" || head === "callconv";
+}
+
 function zigSwitch(code: Tok[]): boolean {
   let paren = 0;
   for (const tok of code) {
@@ -582,15 +600,15 @@ function zigHasFn(code: Tok[]): boolean {
   return false;
 }
 
-/** `union(enum)` is a container. A following `(` otherwise means the keyword is a type in a signature. */
-function zigTaggedUnion(code: Tok[]): boolean {
+/** `union(enum)` and `enum(u2)` are containers. A following `(` otherwise means the keyword is a type in a signature. */
+function zigParenContainer(code: Tok[], keyword: string): boolean {
   let paren = 0;
   for (let i = 0; i < code.length; i++) {
     const tok = code[i];
     if (!tok) continue;
     if (tok.text === "(") paren++;
     else if (tok.text === ")" && paren > 0) paren--;
-    else if (paren === 0 && tok.kind === "keyword" && tok.text === "union" && code[i + 1]?.text === "(") return true;
+    else if (paren === 0 && tok.kind === "keyword" && tok.text === keyword && code[i + 1]?.text === "(") return true;
   }
   return false;
 }
@@ -614,6 +632,17 @@ function zigValueSemi(code: Tok[]): boolean {
   }
   if (sawReturn || sawCatch) return true;
   if (sawEq && (sawDecl || !sawReturn)) return true;
+  return false;
+}
+
+/** A Kotlin block on the right of `=` or `return` is an expression. It closes with `};`. */
+function kotlinValueSemi(code: Tok[]): boolean {
+  let paren = 0;
+  for (const tok of code) {
+    if (tok.text === "(") paren++;
+    else if (tok.text === ")" && paren > 0) paren--;
+    else if (paren === 0 && (tok.text === "=" || tok.text === "return")) return true;
+  }
   return false;
 }
 
@@ -1473,21 +1502,31 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
         held.push(...inner);
         flushClosing(top);
         held.push(...outer);
+        const parent = stack.length > 1 ? stack[stack.length - 2] : undefined;
+        if (profile.id === "kotlin" && top.kotlinEnumConst && parent?.kind === "enum" && indent === parent.bodyIndent) {
+          const word = codeTokens(line)[0];
+          if (word?.kind === "keyword") top.valueSemi = true;
+          else top.commaChild = true;
+        }
         stack.pop();
         lastClosedHeader = top.headerIndent;
         const lineCode = codeTokens(line);
         const declTail = top.wantsTail && isDeclaratorTail(line);
         const attrTail = top.closer === "}" && top.semiOnClose && isAttributeLine(lineCode);
         const endMod = profile.id === "pascal" ? pascalEndModifier(line) : null;
+        const zigTail =
+          profile.id === "zig" &&
+          (top.kind === "struct" || top.kind === "union" || top.kind === "enum" || top.kind === "opaque" || top.kind === "error") &&
+          zigSuffixLine(line);
         const tail =
           !absorbed &&
           stack.every((frame) => indent >= frame.bodyIndent) &&
           indent === top.headerIndent &&
-          (declTail || attrTail || !!endMod);
+          (declTail || attrTail || !!endMod || zigTail);
         if (tail) {
           const rendered = textOf({ segments: renderLine(line, "keep", ""), sourceLine: line.no }).trim();
           const openDecl = declTail && lineCode.at(-1)?.text === ",";
-          closeFrame(top, line.no, declTail || attrTail ? rendered : endMod, openDecl);
+          closeFrame(top, line.no, declTail || attrTail || zigTail ? rendered : endMod, openDecl);
           absorbed = true;
           if (openDecl) absorbedHang = true;
         } else {
@@ -1558,7 +1597,8 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       attaches &&
       !directiveBetween &&
       held.every((line) => lineKind(line) !== "code") &&
-      !(profile.id === "zig" && stack.at(-1)?.kind === "switch" && headWord === "else");
+      !(profile.id === "zig" && stack.at(-1)?.kind === "switch" && headWord === "else") &&
+      !(profile.id === "kotlin" && code.some((t) => t.text === "->"));
     let prefix: OutSegment[] | null = null;
     if (
       !glue &&
@@ -1702,11 +1742,13 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
     const zigContainer =
       profile.id === "zig" &&
       (topKind === "enum" || topKind === "error" || topKind === "struct" || topKind === "union" || topKind === "opaque");
+    const kotlinMemberLine = profile.id === "kotlin" && topKind === "enum" && code[0]?.kind === "keyword";
     const inEnum =
       (topKind === "switch" ||
         (profile.id !== "zig" && (topKind === "enum" || topKind === "error")) ||
         (zigContainer && zigContainerLine(code))) &&
-      next.braces.at(-1) !== "init";
+      next.braces.at(-1) !== "init" &&
+      !kotlinMemberLine;
     const indentedStar =
       (aheadCode[0]?.text === "*" || aheadCode[0]?.text === "&") && (aheadCode[0]?.col ?? 0) > indentOf(line);
     const cont =
@@ -1779,9 +1821,14 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       opens = false;
       colon = "drop";
     }
+    if (profile.id === "kotlin" && topKind === "enum" && code[0]?.kind !== "keyword" && code.at(-1)?.text === ":" && !opens) {
+      // `RED:` is an enum constant body. A two-token ident colon is not a label here.
+      opens = true;
+      colon = "brace";
+    }
     const anglesClosed = profile.id === "pascal" && code.at(-1)?.text === ">" && anglesBalance(code);
     const trySection = profile.id === "pascal" && pascalTrySection(line);
-    const lineHanging = style?.open || anglesClosed || trySection ? false : next.hanging && !(profile.id === "pascal" && code.at(-1)?.text === "^");
+    const lineHanging = opens || anglesClosed || trySection ? false : next.hanging && !(profile.id === "pascal" && code.at(-1)?.text === "^");
     const effParen = effectiveParen(next.paren, next.braces, next.braceParen);
     const base = terminatorOf(
       line,
@@ -1801,6 +1848,26 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
     if (splitHead && !doWhile && code.at(-1)?.text === ")" && directiveBeforeNext(index, ahead)) term = "";
     if (term === "," && aheadCode[0]?.text === ",") term = "";
     if (term === ";" && aheadCode.length === 1 && aheadCode[0]?.text === ";") term = "";
+    if (
+      profile.id === "kotlin" &&
+      term === ";" &&
+      (aheadCode[0]?.text === "get" || aheadCode[0]?.text === "set" || aheadCode[0]?.text === "where") &&
+      code.some((t) => t.text === "val" || t.text === "var" || t.text === "fun")
+    ) {
+      term = "";
+    }
+    const kotlinEnumMember =
+      profile.id === "kotlin" &&
+      topKind === "enum" &&
+      !kotlinMemberLine &&
+      !opens &&
+      aheadCode[0]?.kind === "keyword" &&
+      !!ahead &&
+      indentOf(ahead) === indentOf(line);
+    if (kotlinEnumMember) {
+      const lastText = code.at(-1)?.text;
+      term = lastText === ";" || lastText === "," ? "" : ";";
+    }
     if (profile.id === "pascal") {
       if (stack.at(-1)?.asm) term = "";
       const words = pascalWords(code);
@@ -1845,6 +1912,14 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
     }
     if (term === ";") events.push({ line: line.no, message: "Inserted semicolon" });
     if (term === ",") events.push({ line: line.no, message: "Inserted comma" });
+    if (kotlinEnumMember && code.at(-1)?.text === ",") {
+      const last = out.at(-1);
+      const seg = last?.segments.at(-1);
+      if (seg?.text.endsWith(",")) {
+        seg.text = `${seg.text.slice(0, -1)};`;
+        seg.inserted = true;
+      }
+    }
     if (cont && base === ";" && term === "") {
       events.push({ line: line.no, message: "Left this line open for the next line" });
     }
@@ -1854,8 +1929,13 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
       if (profile.id === "zig") {
         info.wantsTail = false;
         if (zigInlineContainer(code)) info.kind = "block";
-        else if (info.kind === "block" && zigTaggedUnion(code) && !zigHasFn(code)) info.kind = "union";
+        else if (info.kind === "block" && !zigHasFn(code) && zigParenContainer(code, "union")) info.kind = "union";
+        else if (info.kind === "block" && !zigHasFn(code) && zigParenContainer(code, "enum")) info.kind = "enum";
         if (zigSwitch(code)) info.kind = "switch";
+      }
+      if (profile.id === "kotlin") {
+        info.wantsTail = false;
+        if (code.some((t) => t.kind === "keyword" && t.text === "enum")) info.kind = "enum";
       }
       const pwords = profile.id === "pascal" ? pascalWords(code) : [];
       const openedName = pwords.includes("case") && pwords[pwords.length - 1] === "of" ? "case" : headerName(tokens);
@@ -1865,8 +1945,9 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
         headerIndent: statementStartIndent(index, line),
         bodyIndent: indentOf(line),
         semiOnClose: semiOnClose(tokens, profile),
-        valueSemi: profile.id === "zig" && (zigValueSemi(code) || inherited),
+        valueSemi: (profile.id === "zig" && (zigValueSemi(code) || inherited)) || (profile.id === "kotlin" && kotlinValueSemi(code)),
         commaChild: profile.id === "zig" && stack.at(-1)?.kind === "switch",
+        kotlinEnumConst: profile.id === "kotlin" && stack.at(-1)?.kind === "enum" && code[0]?.kind !== "keyword",
         name: openedName,
         kind: info.kind,
         wantsTail: info.wantsTail,

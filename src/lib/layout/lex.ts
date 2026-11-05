@@ -105,17 +105,170 @@ export function lex(source: string, profile: Profile): { tokens: Tok[]; notes: L
     const from = snapshot();
     bump();
     bump();
-    while (i < source.length) {
+    let depth = 1;
+    const nest = profile.id === "kotlin";
+    while (i < source.length && depth > 0) {
+      if (nest && source[i] === "/" && source[i + 1] === "*") {
+        depth++;
+        bump();
+        bump();
+        continue;
+      }
       if (source[i] === "*" && source[i + 1] === "/") {
+        depth--;
         bump();
         bump();
-        push("comment", from);
-        return;
+        if (depth === 0) {
+          push("comment", from);
+          return;
+        }
+        continue;
       }
       bump();
     }
     notes.push({ line: from.line, message: "Unclosed block comment" });
     push("comment", from);
+  }
+
+  function identStart(ch: string | undefined): boolean {
+    return !!ch && /[A-Za-z_]/.test(ch);
+  }
+
+  function identPart(ch: string | undefined): boolean {
+    return !!ch && /[A-Za-z0-9_]/.test(ch);
+  }
+
+  function skipKotlinChar(): void {
+    if (source[i] !== "'") return;
+    bump();
+    if (source[i] === "\\") {
+      bump();
+      if (i < source.length && source[i] !== "\n") bump();
+    } else if (source[i] && source[i] !== "'" && source[i] !== "\n") {
+      bump();
+    }
+    if (source[i] === "'") bump();
+  }
+
+  function skipNestedComment(): void {
+    if (!(source[i] === "/" && source[i + 1] === "*")) return;
+    bump();
+    bump();
+    let depth = 1;
+    while (i < source.length && depth > 0) {
+      if (source[i] === "/" && source[i + 1] === "*") {
+        depth++;
+        bump();
+        bump();
+        continue;
+      }
+      if (source[i] === "*" && source[i + 1] === "/") {
+        depth--;
+        bump();
+        bump();
+        continue;
+      }
+      bump();
+    }
+  }
+
+  function skipKotlinInterpolation(): void {
+    if (source[i] !== "$") return;
+    bump();
+    if (source[i] === "{") {
+      bump();
+      let depth = 1;
+      while (i < source.length && depth > 0) {
+        if (source.startsWith('"""', i)) {
+          skipKotlinString(true);
+          continue;
+        }
+        if (source[i] === '"') {
+          skipKotlinString(false);
+          continue;
+        }
+        if (source[i] === "'") {
+          skipKotlinChar();
+          continue;
+        }
+        if (source[i] === "/" && source[i + 1] === "/") {
+          while (i < source.length && source[i] !== "\n") bump();
+          continue;
+        }
+        if (source[i] === "/" && source[i + 1] === "*") {
+          skipNestedComment();
+          continue;
+        }
+        if (source[i] === "{") {
+          depth++;
+          bump();
+          continue;
+        }
+        if (source[i] === "}") {
+          depth--;
+          bump();
+          continue;
+        }
+        bump();
+      }
+      return;
+    }
+    if (identStart(source[i])) {
+      bump();
+      while (identPart(source[i])) bump();
+    }
+  }
+
+  /** Consumes one Kotlin string at i, including `$` interpolations. */
+  function skipKotlinString(triple: boolean): boolean {
+    if (triple) {
+      if (!source.startsWith('"""', i)) return false;
+      bump();
+      bump();
+      bump();
+      while (i < source.length) {
+        if (source.startsWith('"""', i)) {
+          bump();
+          bump();
+          bump();
+          return true;
+        }
+        if (source[i] === "$") {
+          skipKotlinInterpolation();
+          continue;
+        }
+        bump();
+      }
+      return false;
+    }
+    if (source[i] !== '"') return false;
+    bump();
+    while (i < source.length) {
+      const c = source[i];
+      if (c === "\\") {
+        bump();
+        if (i < source.length && source[i] !== "\n") bump();
+        continue;
+      }
+      if (c === "\n") return false;
+      if (c === '"') {
+        bump();
+        return true;
+      }
+      if (c === "$") {
+        skipKotlinInterpolation();
+        continue;
+      }
+      bump();
+    }
+    return false;
+  }
+
+  function consumeKotlinString(): void {
+    const from = snapshot();
+    const closed = skipKotlinString(source.startsWith('"""', i));
+    if (!closed) notes.push({ line: from.line, message: "Unclosed string" });
+    push("string", from);
   }
 
   function consumeTemplate(): void {
@@ -518,6 +671,10 @@ export function lex(source: string, profile: Profile): { tokens: Tok[]; notes: L
     if (profile.regex && c === "/" && canStartRegex()) {
       if (consumeRegex()) continue;
     }
+    if (profile.id === "kotlin" && c === '"') {
+      consumeKotlinString();
+      continue;
+    }
     if (c === '"' || c === "'") {
       consumeString(c);
       continue;
@@ -587,6 +744,20 @@ export function lex(source: string, profile: Profile): { tokens: Tok[]; notes: L
       continue;
     }
     const from = snapshot();
+    if (profile.id === "kotlin" && source.startsWith("?:", i)) {
+      bump();
+      bump();
+      push("punct", from);
+      continue;
+    }
+    if (profile.id === "kotlin") {
+      const bang = source.startsWith("!is", i) ? "!is" : source.startsWith("!in", i) ? "!in" : "";
+      if (bang && !identPart(source[i + bang.length])) {
+        for (let k = 0; k < bang.length; k++) bump();
+        push("punct", from);
+        continue;
+      }
+    }
     const rest = source.slice(i, i + 4);
     const op = MULTI.find((m) => rest.startsWith(m));
     if (op) {

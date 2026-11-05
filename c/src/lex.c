@@ -129,19 +129,200 @@ static void consume_block_comment(Lexer *lx) {
   int line = lx->line;
   int col = lx->col;
   size_t start = lx->i;
+  int depth = 1;
+  bool nest = lx->profile->id == LANG_KOTLIN;
   bump(lx);
   bump(lx);
-  while (lx->i < lx->n) {
+  while (lx->i < lx->n && depth > 0) {
+    if (nest && at(lx, lx->i) == '/' && at(lx, lx->i + 1u) == '*') {
+      depth++;
+      bump(lx);
+      bump(lx);
+      continue;
+    }
     if (at(lx, lx->i) == '*' && at(lx, lx->i + 1u) == '/') {
+      depth--;
       bump(lx);
       bump(lx);
-      push_tok(lx, TOK_COMMENT, line, col, start);
-      return;
+      if (depth == 0) {
+        push_tok(lx, TOK_COMMENT, line, col, start);
+        return;
+      }
+      continue;
     }
     bump(lx);
   }
   note(lx, line, "Unclosed block comment");
   push_tok(lx, TOK_COMMENT, line, col, start);
+}
+
+static bool ident_start(char ch) {
+  return rt_is_alpha(ch) || ch == '_';
+}
+
+static bool ident_part(char ch) {
+  return rt_is_alnum(ch) || ch == '_';
+}
+
+static bool skip_kotlin_string(Lexer *lx, bool triple);
+
+static void skip_kotlin_char(Lexer *lx) {
+  if (at(lx, lx->i) != '\'') {
+    return;
+  }
+  bump(lx);
+  if (at(lx, lx->i) == '\\') {
+    bump(lx);
+    if (lx->i < lx->n && at(lx, lx->i) != '\n') {
+      bump(lx);
+    }
+  } else if (lx->i < lx->n && at(lx, lx->i) != '\'' && at(lx, lx->i) != '\n') {
+    bump(lx);
+  }
+  if (at(lx, lx->i) == '\'') {
+    bump(lx);
+  }
+}
+
+static void skip_nested_comment(Lexer *lx) {
+  int depth;
+  if (!(at(lx, lx->i) == '/' && at(lx, lx->i + 1u) == '*')) {
+    return;
+  }
+  bump(lx);
+  bump(lx);
+  depth = 1;
+  while (lx->i < lx->n && depth > 0) {
+    if (at(lx, lx->i) == '/' && at(lx, lx->i + 1u) == '*') {
+      depth++;
+      bump(lx);
+      bump(lx);
+      continue;
+    }
+    if (at(lx, lx->i) == '*' && at(lx, lx->i + 1u) == '/') {
+      depth--;
+      bump(lx);
+      bump(lx);
+      continue;
+    }
+    bump(lx);
+  }
+}
+
+static void skip_kotlin_interpolation(Lexer *lx) {
+  if (at(lx, lx->i) != '$') {
+    return;
+  }
+  bump(lx);
+  if (at(lx, lx->i) == '{') {
+    int depth = 1;
+    bump(lx);
+    while (lx->i < lx->n && depth > 0) {
+      if (starts_at(lx, lx->i, "\"\"\"")) {
+        skip_kotlin_string(lx, true);
+        continue;
+      }
+      if (at(lx, lx->i) == '"') {
+        skip_kotlin_string(lx, false);
+        continue;
+      }
+      if (at(lx, lx->i) == '\'') {
+        skip_kotlin_char(lx);
+        continue;
+      }
+      if (at(lx, lx->i) == '/' && at(lx, lx->i + 1u) == '/') {
+        while (lx->i < lx->n && at(lx, lx->i) != '\n') {
+          bump(lx);
+        }
+        continue;
+      }
+      if (at(lx, lx->i) == '/' && at(lx, lx->i + 1u) == '*') {
+        skip_nested_comment(lx);
+        continue;
+      }
+      if (at(lx, lx->i) == '{') {
+        depth++;
+        bump(lx);
+        continue;
+      }
+      if (at(lx, lx->i) == '}') {
+        depth--;
+        bump(lx);
+        continue;
+      }
+      bump(lx);
+    }
+    return;
+  }
+  if (ident_start(at(lx, lx->i))) {
+    bump(lx);
+    while (ident_part(at(lx, lx->i))) {
+      bump(lx);
+    }
+  }
+}
+
+static bool skip_kotlin_string(Lexer *lx, bool triple) {
+  if (triple) {
+    if (!starts_at(lx, lx->i, "\"\"\"")) {
+      return false;
+    }
+    bump(lx);
+    bump(lx);
+    bump(lx);
+    while (lx->i < lx->n) {
+      if (starts_at(lx, lx->i, "\"\"\"")) {
+        bump(lx);
+        bump(lx);
+        bump(lx);
+        return true;
+      }
+      if (at(lx, lx->i) == '$') {
+        skip_kotlin_interpolation(lx);
+        continue;
+      }
+      bump(lx);
+    }
+    return false;
+  }
+  if (at(lx, lx->i) != '"') {
+    return false;
+  }
+  bump(lx);
+  while (lx->i < lx->n) {
+    char ch = at(lx, lx->i);
+    if (ch == '\\') {
+      bump(lx);
+      if (lx->i < lx->n && at(lx, lx->i) != '\n') {
+        bump(lx);
+      }
+      continue;
+    }
+    if (ch == '\n') {
+      return false;
+    }
+    if (ch == '"') {
+      bump(lx);
+      return true;
+    }
+    if (ch == '$') {
+      skip_kotlin_interpolation(lx);
+      continue;
+    }
+    bump(lx);
+  }
+  return false;
+}
+
+static void consume_kotlin_string(Lexer *lx) {
+  int line = lx->line;
+  int col = lx->col;
+  size_t start = lx->i;
+  bool triple = starts_at(lx, lx->i, "\"\"\"");
+  if (!skip_kotlin_string(lx, triple)) {
+    note(lx, line, "Unclosed string");
+  }
+  push_tok(lx, TOK_STRING, line, col, start);
 }
 
 static void consume_template(Lexer *lx) {
@@ -750,6 +931,10 @@ void lex_source(Arena *arena, const char *source, size_t len, const Profile *pro
         continue;
       }
     }
+    if (profile->id == LANG_KOTLIN && ch == '"') {
+      consume_kotlin_string(&lx);
+      continue;
+    }
     if (ch == '"' || ch == '\'') {
       consume_string(&lx, ch);
       continue;
@@ -837,6 +1022,23 @@ void lex_source(Arena *arena, const char *source, size_t len, const Profile *pro
       size_t start = lx.i;
       size_t m;
       bool matched = false;
+      if (profile->id == LANG_KOTLIN && starts_at(&lx, lx.i, "?:")) {
+        bump(&lx);
+        bump(&lx);
+        push_tok(&lx, TOK_PUNCT, line, col, start);
+        continue;
+      }
+      if (profile->id == LANG_KOTLIN && (starts_at(&lx, lx.i, "!is") || starts_at(&lx, lx.i, "!in"))) {
+        size_t bn = starts_at(&lx, lx.i, "!is") ? 3u : 3u;
+        if (!ident_part(at(&lx, lx.i + bn))) {
+          size_t k;
+          for (k = 0; k < bn; k++) {
+            bump(&lx);
+          }
+          push_tok(&lx, TOK_PUNCT, line, col, start);
+          continue;
+        }
+      }
       for (m = 0; m < sizeof MULTI / sizeof MULTI[0]; m++) {
         if (starts_at(&lx, lx.i, MULTI[m])) {
           size_t k;

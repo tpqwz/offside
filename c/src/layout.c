@@ -53,6 +53,7 @@ typedef struct Frame {
   int cond_depth;
   int body_cond;
   bool skip_shell;
+  bool kotlin_enum_const;
 } Frame;
 
 typedef struct LayoutState {
@@ -130,7 +131,7 @@ typedef struct Layout {
 static const char *const HANGING[] = {
   "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "~", "?", ":", ",", ".", "\\",
   "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-  "<<", ">>", ">>>", "->", "=>", "?.", "??", "::", "<<=", ">>=", ">>>=",
+  "<<", ">>", ">>>", "->", "=>", "?.", "?:", "??", "::", "<<=", ">>=", ">>>=",
 };
 static const char *const CONT_START[] = {
   "+", "-", "/", "%", "?", "<", ">", "=",
@@ -158,6 +159,10 @@ static const char *const COLON_HEADER[] = {
 };
 static const char *const HEADER_KEYWORDS[] = {
   "else", "do", "struct", "union", "enum", "class", "interface", "record", "try", "finally",
+};
+static const char *const KOTLIN_OPEN[] = {
+  "fun", "class", "interface", "object", "when", "if", "else", "for", "while", "do",
+  "try", "catch", "finally", "init", "constructor", "companion", "where",
 };
 static const char *const DECL_START[] = {
   "if", "else", "for", "while", "do", "switch", "return", "goto", "break", "continue",
@@ -608,6 +613,17 @@ static bool opens_block(const Tok *code, size_t n, bool block_colon, bool label_
   if (n == 1 && tok_is(&code[0], ":")) {
     return !label_colon;
   }
+  if (lang == LANG_KOTLIN) {
+    if (n >= 2 && (tok_is(&code[n - 2u], ")") || tok_is(&code[n - 2u], "=>") || tok_is(&code[n - 2u], "->"))) {
+      return true;
+    }
+    for (i = 0; i < n; i++) {
+      if (code[i].kind == TOK_KEYWORD && HAS(KOTLIN_OPEN, code[i].text, code[i].len)) {
+        return true;
+      }
+    }
+    return false;
+  }
   if (n >= 2 && (tok_is(&code[n - 2u], ")") || tok_is(&code[n - 2u], "=>"))) {
     return true;
   }
@@ -782,6 +798,13 @@ static BraceKind brace_kind_at(const Tok *code, size_t n, size_t index, const ch
   const Tok *prev;
   int depth;
   size_t i;
+  if (lang == LANG_KOTLIN) {
+    (void)code;
+    (void)n;
+    (void)index;
+    (void)hang;
+    return BR_STMT;
+  }
   if (lang == LANG_ZIG) {
     if (index == 0 || index > n) {
       return BR_STMT;
@@ -972,7 +995,7 @@ static bool zig_inline_container(const Tok *code, size_t n) {
   return false;
 }
 
-static bool zig_tagged_union(const Tok *code, size_t n) {
+static bool zig_paren_container(const Tok *code, size_t n, const char *keyword) {
   int paren = 0;
   size_t i;
   for (i = 0; i < n; i++) {
@@ -980,11 +1003,19 @@ static bool zig_tagged_union(const Tok *code, size_t n) {
       paren++;
     } else if (tok_is(&code[i], ")") && paren > 0) {
       paren--;
-    } else if (paren == 0 && code[i].kind == TOK_KEYWORD && tok_is(&code[i], "union") && i + 1u < n && tok_is(&code[i + 1u], "(")) {
+    } else if (paren == 0 && code[i].kind == TOK_KEYWORD && tok_is(&code[i], keyword) && i + 1u < n
+               && tok_is(&code[i + 1u], "(")) {
       return true;
     }
   }
   return false;
+}
+
+static bool zig_suffix_line(const Tok *code, size_t n) {
+  if (n == 0) {
+    return false;
+  }
+  return tok_is(&code[0], "align") || tok_is(&code[0], "addrspace") || tok_is(&code[0], "linksection") || tok_is(&code[0], "callconv");
 }
 
 static bool zig_switch(const Tok *code, size_t n) {
@@ -1038,6 +1069,31 @@ static bool zig_value_semi(const Tok *code, size_t n) {
   return false;
 }
 
+static bool kotlin_value_semi(const Tok *code, size_t n) {
+  int paren = 0;
+  size_t i;
+  for (i = 0; i < n; i++) {
+    if (tok_is(&code[i], "(")) {
+      paren++;
+    } else if (tok_is(&code[i], ")") && paren > 0) {
+      paren--;
+    } else if (paren == 0 && (tok_is(&code[i], "=") || tok_is(&code[i], "return"))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool code_has(const Tok *code, size_t n, const char *text) {
+  size_t i;
+  for (i = 0; i < n; i++) {
+    if (tok_is(&code[i], text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static Classified classify_line(const LogicalLine *line, const LayoutState *state, const char *hang, bool label_colon, LangId lang) {
   Classified out;
   size_t n = 0;
@@ -1068,7 +1124,7 @@ static Classified classify_line(const LogicalLine *line, const LayoutState *stat
       if (kind == BR_INIT && (local.nbraces == 0 || local.braces[local.nbraces - 1u] != BR_INIT)) {
         out.closed_init = true;
       }
-    } else if (tok_is(&code[i], "?") && lang != LANG_ZIG) {
+    } else if (tok_is(&code[i], "?") && lang != LANG_ZIG && lang != LANG_KOTLIN) {
       local.ternary++;
     } else if (tok_is(&code[i], ":")) {
       bool is_last = i + 1u == n;
@@ -2901,17 +2957,29 @@ Result layout_source(const char *source, size_t len, LangId lang) {
           }
           free(inner);
           free(outer);
+          if (profile->id == LANG_KOTLIN && top->kotlin_enum_const && lx.nstack > 1u) {
+            Frame *parent = &lx.stack[lx.nstack - 2u];
+            if (parent->kind == FK_ENUM && indent == parent->body_indent && code_n > 0) {
+              if (code[0].kind == TOK_KEYWORD) {
+                top->value_semi = true;
+              } else {
+                top->comma_child = true;
+              }
+            }
+          }
           lx.nstack--;
           last_closed = top->header_indent;
           decl_tail = top->wants_tail && is_declarator_tail(line);
           attr_tail = top->closer == CL_RBRACE && top->semi_on_close && is_attribute_line(code, code_n);
           end_mod = profile->id == LANG_PASCAL ? pascal_end_modifier(arena, line) : NULL;
-          tail = !absorbed && stack_body_ok(&lx, indent) && indent == top->header_indent && (decl_tail || attr_tail || end_mod != NULL);
+          bool zig_tail = profile->id == LANG_ZIG && zig_suffix_line(code, code_n)
+            && (top->kind == FK_STRUCT || top->kind == FK_UNION || top->kind == FK_ENUM || top->kind == FK_OPAQUE || top->kind == FK_ERROR);
+          tail = !absorbed && stack_body_ok(&lx, indent) && indent == top->header_indent && (decl_tail || attr_tail || end_mod != NULL || zig_tail);
           if (tail) {
             SegBuf rendered = render_line(arena, line, COL_KEEP, "", false);
             const char *shown = trim_copy(arena, text_of_segs(arena, rendered.items, rendered.len));
             bool open_decl = decl_tail && code_n > 0 && tok_is(&code[code_n - 1u], ",");
-            close_frame(&lx, top, line->no, decl_tail || attr_tail ? shown : end_mod, open_decl, true);
+            close_frame(&lx, top, line->no, decl_tail || attr_tail || zig_tail ? shown : end_mod, open_decl, true);
             absorbed = true;
             if (open_decl) {
               absorbed_hang = true;
@@ -3000,6 +3068,7 @@ Result layout_source(const char *source, size_t len, LangId lang) {
         bool lone_colon_next;
         bool join_string;
         bool in_enum;
+        bool kotlin_enum_member;
         bool indented_star;
         bool cont;
         size_t style_n = 0;
@@ -3025,7 +3094,8 @@ Result layout_source(const char *source, size_t len, LangId lang) {
           || (profile->id != LANG_PASCAL && strcmp(head_word, "finally") == 0) || do_while;
         attaches = closed >= 1 && last_closed == indent;
         glue = code_n > 0 && (code[0].kind == TOK_KEYWORD || profile->id == LANG_PASCAL) && glue_word && attaches && !directive_between && only_trivia
-          && !(profile->id == LANG_ZIG && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_SWITCH && head_word != NULL && strcmp(head_word, "else") == 0);
+          && !(profile->id == LANG_ZIG && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_SWITCH && head_word != NULL && strcmp(head_word, "else") == 0)
+          && !(profile->id == LANG_KOTLIN && code_has(code, code_n, "->"));
         if (!glue && directive_between && attaches && glue_word && lx.nout > 0) {
           const char *glued = text_of_line(arena, &lx.out[lx.nout - 1u]);
           const char *trim = glued;
@@ -3192,13 +3262,19 @@ Result layout_source(const char *source, size_t len, LangId lang) {
               || (code_n == 1 && code[0].kind == TOK_IDENT) || (head_text != NULL && (strcmp(head_text, "case") == 0 || strcmp(head_text, "default") == 0)));
         join_string = code_n > 0 && code[code_n - 1u].kind == TOK_STRING && ahead_n > 0 && ahead_code[0].kind == TOK_STRING;
         in_enum = false;
-        if (lx.nstack > 0 && !(next.nbraces > 0 && next.braces[next.nbraces - 1u] == BR_INIT)) {
-          FrameKind top_kind = lx.stack[lx.nstack - 1u].kind;
-          bool zig_container = profile->id == LANG_ZIG
-            && (top_kind == FK_ENUM || top_kind == FK_ERROR || top_kind == FK_STRUCT || top_kind == FK_UNION || top_kind == FK_OPAQUE);
-          in_enum = top_kind == FK_SWITCH
-            || (profile->id != LANG_ZIG && (top_kind == FK_ENUM || top_kind == FK_ERROR))
-            || (zig_container && zig_container_line(code, code_n));
+        kotlin_enum_member = false;
+        {
+          bool kotlin_member_line = profile->id == LANG_KOTLIN && code_n > 0 && code[0].kind == TOK_KEYWORD
+            && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_ENUM;
+          if (lx.nstack > 0 && !(next.nbraces > 0 && next.braces[next.nbraces - 1u] == BR_INIT)) {
+            FrameKind top_kind = lx.stack[lx.nstack - 1u].kind;
+            bool zig_container = profile->id == LANG_ZIG
+              && (top_kind == FK_ENUM || top_kind == FK_ERROR || top_kind == FK_STRUCT || top_kind == FK_UNION || top_kind == FK_OPAQUE);
+            in_enum = (top_kind == FK_SWITCH
+              || (profile->id != LANG_ZIG && (top_kind == FK_ENUM || top_kind == FK_ERROR))
+              || (zig_container && zig_container_line(code, code_n)))
+              && !kotlin_member_line;
+          }
         }
         indented_star = ahead_n > 0 && (tok_is(&ahead_code[0], "*") || tok_is(&ahead_code[0], "&")) && ahead_code[0].col > indent;
         cont = is_open_header(&lx, index, line, next.paren) || lone_colon_next || bitfield
@@ -3260,7 +3336,12 @@ Result layout_source(const char *source, size_t len, LangId lang) {
           opens = false;
           colon = COL_DROP;
         }
-        line_hanging = style.open || (profile->id == LANG_PASCAL && code_n > 0 && tok_is(&code[code_n - 1u], ">") && angles_balance(code, code_n))
+        if (profile->id == LANG_KOTLIN && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_ENUM
+            && !(code_n > 0 && code[0].kind == TOK_KEYWORD) && code_n > 0 && tok_is(&code[code_n - 1u], ":") && !opens) {
+          opens = true;
+          colon = COL_BRACE;
+        }
+        line_hanging = opens || (profile->id == LANG_PASCAL && code_n > 0 && tok_is(&code[code_n - 1u], ">") && angles_balance(code, code_n))
             || (profile->id == LANG_PASCAL && pascal_try_section(arena, line))
           ? false
           : next.hanging && !(profile->id == LANG_PASCAL && code_n > 0 && tok_is(&code[code_n - 1u], "^"));
@@ -3280,6 +3361,23 @@ Result layout_source(const char *source, size_t len, LangId lang) {
         }
         if (strcmp(term, ";") == 0 && ahead_n == 1 && tok_is(&ahead_code[0], ";")) {
           term = "";
+        }
+        if (profile->id == LANG_KOTLIN && strcmp(term, ";") == 0 && ahead_n > 0
+            && (tok_is(&ahead_code[0], "get") || tok_is(&ahead_code[0], "set") || tok_is(&ahead_code[0], "where"))
+            && (depth0_text(code, code_n, "val") || depth0_text(code, code_n, "var") || depth0_text(code, code_n, "fun"))) {
+          term = "";
+        }
+        if (profile->id == LANG_KOTLIN && !opens && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_ENUM
+            && !(code_n > 0 && code[0].kind == TOK_KEYWORD) && ahead != (size_t)-1 && ahead_n > 0
+            && ahead_code[0].kind == TOK_KEYWORD && indent_of(&lx.logical[ahead]) == indent) {
+          kotlin_enum_member = true;
+        }
+        if (kotlin_enum_member) {
+          if (code_n > 0 && (tok_is(&code[code_n - 1u], ";") || tok_is(&code[code_n - 1u], ","))) {
+            term = "";
+          } else if (code_n > 0) {
+            term = ";";
+          }
         }
         if (profile->id == LANG_PASCAL) {
           size_t nw = 0;
@@ -3332,6 +3430,17 @@ Result layout_source(const char *source, size_t len, LangId lang) {
           free(all);
           free(rendered.items);
           free(prefix);
+          if (kotlin_enum_member && code_n > 0 && tok_is(&code[code_n - 1u], ",") && lx.nout > 0) {
+            OutLine *last = &lx.out[lx.nout - 1u];
+            if (last->nsegs > 0) {
+              OutSeg *seg = &last->segs[last->nsegs - 1u];
+              size_t n = seg->text == NULL ? 0 : strlen(seg->text);
+              if (n > 0 && seg->text[n - 1u] == ',') {
+                seg->text = arena_printf(arena, "%.*s;", (int)(n - 1u), seg->text);
+                seg->inserted = true;
+              }
+            }
+          }
           if (zig_multi) {
             OutSeg semi;
             int at = statement_start_indent(&lx, index, line);
@@ -3373,21 +3482,41 @@ Result layout_source(const char *source, size_t len, LangId lang) {
             wants = false;
             if (zig_inline_container(code, code_n)) {
               fk = FK_BLOCK;
-            } else if (fk == FK_BLOCK && zig_tagged_union(code, code_n) && !zig_has_fn(code, code_n)) {
+            } else if (fk == FK_BLOCK && !zig_has_fn(code, code_n) && zig_paren_container(code, code_n, "union")) {
               fk = FK_UNION;
+            } else if (fk == FK_BLOCK && !zig_has_fn(code, code_n) && zig_paren_container(code, code_n, "enum")) {
+              fk = FK_ENUM;
             }
             if (zig_switch(code, code_n)) {
               fk = FK_SWITCH;
             }
           }
+          if (profile->id == LANG_KOTLIN) {
+            size_t ei;
+            int ep = 0;
+            wants = false;
+            for (ei = 0; ei < code_n; ei++) {
+              if (tok_is(&code[ei], "(")) {
+                ep++;
+              } else if (tok_is(&code[ei], ")") && ep > 0) {
+                ep--;
+              } else if (ep == 0 && code[ei].kind == TOK_KEYWORD && tok_is(&code[ei], "enum")) {
+                fk = FK_ENUM;
+                break;
+              }
+            }
+          }
           opened.header_indent = statement_start_indent(&lx, index, line);
           opened.body_indent = indent;
           opened.semi_on_close = semi_on_close(style_source, style_n, profile);
-          opened.value_semi = profile->id == LANG_ZIG && (zig_value_semi(code, code_n) || (head_text != NULL && strcmp(head_text, "else") == 0 && lx.carry_value_semi));
+          opened.value_semi = (profile->id == LANG_ZIG && (zig_value_semi(code, code_n) || (head_text != NULL && strcmp(head_text, "else") == 0 && lx.carry_value_semi)))
+            || (profile->id == LANG_KOTLIN && kotlin_value_semi(code, code_n));
           if (head_text != NULL && strcmp(head_text, "else") == 0) {
             lx.carry_value_semi = false;
           }
           opened.comma_child = profile->id == LANG_ZIG && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_SWITCH;
+          opened.kotlin_enum_const = profile->id == LANG_KOTLIN && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_ENUM
+            && (code_n == 0 || code[0].kind != TOK_KEYWORD);
           opened.name = (pwords != NULL && words_has(pwords, nw, "case") && nw > 0 && strcmp(pwords[nw - 1u], "of") == 0)
             ? "case" : header_name(arena, style_source, style_n);
           opened.kind = fk;

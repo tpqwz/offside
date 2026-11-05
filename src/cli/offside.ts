@@ -17,8 +17,8 @@ offside run <file> [program args] [-- <compiler args>] [-- <program args>]
 offside emit <file> [--plain]
 offside space <file>
 
-  .csp .sjava .sjs .spas .szig   spaced source
-  .c .h .java .js .zig       host C, Java, JavaScript, Zig
+  .csp .sjava .sjs .spas .szig .skt   spaced source
+  .c .h .java .js .zig .kt       host C, Java, JavaScript, Zig, Kotlin
   .pas .pp .lpr .dpr .inc    host Pascal
 
   offside run hello.csp -- -O2
@@ -26,8 +26,9 @@ offside space <file>
   offside space hello.c
   offside run demo.spas
   offside run demo.szig
+  offside run demo.skt
 
-  --lang c|java|javascript|pascal|zig   ignore the extension
+  --lang c|java|javascript|pascal|zig|kotlin   ignore the extension
   --cc <compiler>            C compiler, else tcc or cc
   --keep                     leave the host file on disk
   --plain                    emit host code without #line
@@ -40,6 +41,7 @@ offside space <file>
   C: tcc defaults to -std=c99. gcc and clang default to -std=gnu2x.
   Pascal: Free Pascal (ppcx64). FPC or OFFSIDE_FPC picks the compiler.
   Zig: zig run. OFFSIDE_ZIG or --cc picks the compiler.
+  Kotlin: kotlinc, then java -jar. OFFSIDE_KOTLIN or --cc picks kotlinc.
   OFFSIDE_CC or TCC or CC overrides the C compiler.
 `;
 
@@ -87,7 +89,7 @@ export function parseArgs(args: string[]): { ok: true; plan: Plan } | { ok: fals
     }
     if (arg === "--lang" || arg === "-l") {
       const value = group[++i];
-      if (!value) return { ok: false, error: `${arg} needs c, java, javascript, pascal, or zig.` };
+      if (!value) return { ok: false, error: `${arg} needs c, java, javascript, pascal, zig, or kotlin.` };
       plan.lang = value;
       continue;
     }
@@ -352,6 +354,39 @@ async function runZig(
   }
 }
 
+async function runKotlin(
+  compiler: string,
+  sourcePath: string,
+  result: LayoutResult,
+  ccFlags: string[],
+  programArgs: string[],
+  keep: boolean,
+  report: boolean,
+): Promise<number> {
+  const dir = mkdtempSync(path.join(tmpdir(), "offside-"));
+  const hostPath = path.join(dir, hostFileName("kotlin", sourcePath, result.code));
+  const jar = path.join(dir, "offside-out.jar");
+  try {
+    const rendered = renderHost(result, sourcePath, false);
+    writeFileSync(hostPath, rendered.code);
+    const remap = report
+      ? (text: string) => remapDiagnostics(text, hostPath, sourcePath, rendered.lineMap)
+      : (text: string) => text;
+    const stop = ccFlags.includes("-c");
+    const compiled = await spawnMapped(
+      compiler,
+      ["-include-runtime", "-d", jar, ...ccFlags.filter((flag) => flag !== "-c"), hostPath],
+      remap,
+      dir,
+    );
+    if (compiled !== 0 || stop) return compiled;
+    return await spawnMapped("java", ["-jar", jar, ...programArgs], remap, dir);
+  } finally {
+    if (keep) process.stderr.write(`kept ${hostPath}\n`);
+    else rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function runJavaScript(
   sourcePath: string,
   result: LayoutResult,
@@ -426,6 +461,10 @@ export async function runPlan(plan: Plan): Promise<number> {
   }
   if (kind.lang === "zig") {
     return runZig(plan.cc ?? process.env.OFFSIDE_ZIG ?? "zig", sourcePath, result, plan.ccFlags, plan.programArgs, plan.keep, !kind.host);
+  }
+  if (kind.lang === "kotlin") {
+    const kotlinc = plan.cc ?? process.env.OFFSIDE_KOTLIN ?? "kotlinc";
+    return runKotlin(kotlinc, sourcePath, result, plan.ccFlags, plan.programArgs, plan.keep, !kind.host);
   }
   return runJavaScript(sourcePath, result, plan.ccFlags, plan.programArgs, plan.keep, !kind.host);
 }
