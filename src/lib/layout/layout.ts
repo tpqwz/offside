@@ -13,7 +13,7 @@ const CONT_START = new Set([
   "+", "-", "/", "%", "?", "<", ">", "=",
   "==", "!=", "<=", ">=", "&&", "||", "<<", ">>", ">>>",
   "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", ">>>=",
-  "->", ".", "|", "^",
+  "->", ".", "|", "^", "?:",
 ]);
 
 const TYPE_PREFIX = new Set([
@@ -644,6 +644,42 @@ function kotlinValueSemi(code: Tok[]): boolean {
     else if (paren === 0 && (tok.text === "=" || tok.text === "return")) return true;
   }
   return false;
+}
+
+/** A line of annotations only (`@Mark`, `@file:JvmName("x")`). It belongs to the next declaration. */
+function kotlinAnnotationOnly(code: Tok[]): boolean {
+  let i = 0;
+  let any = false;
+  while (i < code.length) {
+    if (code[i]?.text !== "@") return false;
+    any = true;
+    i++;
+    while (i < code.length) {
+      const tok = code[i];
+      if (!tok) break;
+      if (tok.kind === "ident" || tok.kind === "keyword" || tok.text === "." || tok.text === ":") {
+        i++;
+        continue;
+      }
+      break;
+    }
+    if (code[i]?.text === "(") {
+      let depth = 0;
+      for (; i < code.length; i++) {
+        const tok = code[i];
+        if (tok?.text === "(") depth++;
+        else if (tok?.text === ")") {
+          depth--;
+          if (depth === 0) {
+            i++;
+            break;
+          }
+        }
+      }
+      if (depth !== 0) return false;
+    }
+  }
+  return any;
 }
 
 function terminatorOf(
@@ -1856,6 +1892,7 @@ export function layoutSource(source: string, lang: LangId): LayoutResult {
     ) {
       term = "";
     }
+    if (profile.id === "kotlin" && term === ";" && kotlinAnnotationOnly(code)) term = "";
     const kotlinEnumMember =
       profile.id === "kotlin" &&
       topKind === "enum" &&

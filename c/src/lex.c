@@ -1023,10 +1023,16 @@ void lex_source(Arena *arena, const char *source, size_t len, const Profile *pro
       size_t m;
       bool matched = false;
       if (profile->id == LANG_KOTLIN && starts_at(&lx, lx.i, "?:")) {
-        bump(&lx);
-        bump(&lx);
-        push_tok(&lx, TOK_PUNCT, line, col, start);
-        continue;
+        size_t k = lx.i + 2u;
+        while (k < lx.n && (lx.src[k] == ' ' || lx.src[k] == '\t')) {
+          k++;
+        }
+        if (!(k >= lx.n || lx.src[k] == '\n' || lx.src[k] == '\r' || (k + 1u < lx.n && lx.src[k] == '/' && lx.src[k + 1u] == '/'))) {
+          bump(&lx);
+          bump(&lx);
+          push_tok(&lx, TOK_PUNCT, line, col, start);
+          continue;
+        }
       }
       if (profile->id == LANG_KOTLIN && (starts_at(&lx, lx.i, "!is") || starts_at(&lx, lx.i, "!in"))) {
         size_t bn = starts_at(&lx, lx.i, "!is") ? 3u : 3u;

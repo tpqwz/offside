@@ -137,7 +137,7 @@ static const char *const CONT_START[] = {
   "+", "-", "/", "%", "?", "<", ">", "=",
   "==", "!=", "<=", ">=", "&&", "||", "<<", ">>", ">>>",
   "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", ">>>=",
-  "->", ".", "|", "^",
+  "->", ".", "|", "^", "?:",
 };
 static const char *const TYPE_PREFIX[] = {
   "auto", "char", "const", "double", "enum", "extern", "float", "inline",
@@ -1082,6 +1082,41 @@ static bool kotlin_value_semi(const Tok *code, size_t n) {
     }
   }
   return false;
+}
+
+static bool kotlin_annotation_only(const Tok *code, size_t n) {
+  size_t i = 0;
+  bool any = false;
+  while (i < n) {
+    size_t k;
+    int depth;
+    if (!tok_is(&code[i], "@")) {
+      return false;
+    }
+    any = true;
+    i++;
+    while (i < n && (code[i].kind == TOK_IDENT || code[i].kind == TOK_KEYWORD || tok_is(&code[i], ".") || tok_is(&code[i], ":"))) {
+      i++;
+    }
+    if (i < n && tok_is(&code[i], "(")) {
+      depth = 0;
+      for (k = i; k < n; k++) {
+        if (tok_is(&code[k], "(")) {
+          depth++;
+        } else if (tok_is(&code[k], ")")) {
+          depth--;
+          if (depth == 0) {
+            i = k + 1u;
+            break;
+          }
+        }
+      }
+      if (depth != 0) {
+        return false;
+      }
+    }
+  }
+  return any;
 }
 
 static bool code_has(const Tok *code, size_t n, const char *text) {
@@ -3365,6 +3400,9 @@ Result layout_source(const char *source, size_t len, LangId lang) {
         if (profile->id == LANG_KOTLIN && strcmp(term, ";") == 0 && ahead_n > 0
             && (tok_is(&ahead_code[0], "get") || tok_is(&ahead_code[0], "set") || tok_is(&ahead_code[0], "where"))
             && (depth0_text(code, code_n, "val") || depth0_text(code, code_n, "var") || depth0_text(code, code_n, "fun"))) {
+          term = "";
+        }
+        if (profile->id == LANG_KOTLIN && strcmp(term, ";") == 0 && kotlin_annotation_only(code, code_n)) {
           term = "";
         }
         if (profile->id == LANG_KOTLIN && !opens && lx.nstack > 0 && lx.stack[lx.nstack - 1u].kind == FK_ENUM

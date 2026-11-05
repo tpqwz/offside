@@ -379,7 +379,7 @@ class Converter {
       ) {
         break;
       }
-      if (this.lang === "kotlin" && j > i && paren === 0 && bracket === 0 && this.kotlinLineBreak(j)) {
+      if (this.lang === "kotlin" && j > i && paren === 0 && bracket === 0 && this.kotlinLineBreak(j, i)) {
         break;
       }
 
@@ -837,11 +837,18 @@ class Converter {
   }
 
   /** A newline ends a Kotlin statement when the next line starts a new one and the previous token does not hang. */
-  kotlinLineBreak(j: number): boolean {
+  kotlinLineBreak(j: number, start: number): boolean {
     const tok = this.code[j];
     const prev = this.code[j - 1];
     if (!tok || !prev) return false;
     if (tok.line <= prev.line) return false;
+    /* An annotation at this column belongs to the next declaration.
+       A deeper one (`class Foo` / `@Ann` / `constructor`) stays with the header. */
+    if (tok.text === "@") {
+      const head = this.code[start];
+      if (!head || tok.col > head.col) return false;
+      return !KOTLIN_HANG.has(prev.text);
+    }
     if (!KOTLIN_BREAK.has(tok.text)) return false;
     if ((tok.text === "catch" || tok.text === "finally" || tok.text === "else") && prev.text === "}") return false;
     return !KOTLIN_HANG.has(prev.text);

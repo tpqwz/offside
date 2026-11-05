@@ -85,6 +85,37 @@ fun main():
 `,
   },
   {
+    name: "nullable-return",
+    source: `fun label(name: String?): String?:
+    return name ?: "none"
+
+fun main():
+    println(label(null))
+`,
+  },
+  {
+    name: "elvis-break",
+    source: `fun pick(name: String?): String:
+    return name
+        ?: "none"
+
+fun main():
+    println(pick(null))
+`,
+  },
+  {
+    name: "annotation",
+    source: `annotation class Mark
+
+@Mark
+fun greet(): String:
+    return "ok"
+
+fun main():
+    println(greet())
+`,
+  },
+  {
     name: "enum-class",
     source: `enum class Color:
     RED
@@ -237,6 +268,31 @@ const HOSTS = [
     source: `fun main() {
     /* outer /* inner */ still */
     println(1)
+}
+`,
+  },
+  {
+    name: "nullable-host",
+    source: `fun label(name: String?): String? {
+    return name ?: "none"
+}
+
+fun main() {
+    println(label(null))
+}
+`,
+  },
+  {
+    name: "annotated-host",
+    source: `annotation class Mark
+
+@Mark
+fun greet(): String {
+    return "ok"
+}
+
+fun main() {
+    println(greet())
 }
 `,
   },

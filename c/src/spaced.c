@@ -1696,7 +1696,7 @@ static bool kotlin_enum_constant(const Converter *cv, int index) {
   return false;
 }
 
-static bool kotlin_line_break(const Converter *cv, int j) {
+static bool kotlin_line_break(const Converter *cv, int j, int start) {
   const Tok *tok = code_at(cv, j);
   const Tok *prev = code_at(cv, j - 1);
   if (tok == NULL || prev == NULL) {
@@ -1704,6 +1704,15 @@ static bool kotlin_line_break(const Converter *cv, int j) {
   }
   if (tok->line <= prev->line) {
     return false;
+  }
+  /* An annotation at this column belongs to the next declaration.
+     A deeper one (class Foo / @Ann / constructor) stays with the header. */
+  if (tok_is(tok, "@")) {
+    const Tok *head = code_at(cv, start);
+    if (head == NULL || tok->col > head->col) {
+      return false;
+    }
+    return !tok_in(prev, KOTLIN_HANG, sizeof KOTLIN_HANG / sizeof KOTLIN_HANG[0]);
   }
   if (!tok_in(tok, KOTLIN_BREAK, sizeof KOTLIN_BREAK / sizeof KOTLIN_BREAK[0])) {
     return false;
@@ -2838,7 +2847,7 @@ static Parsed parse_general(Converter *cv, int i) {
         && (is_control_tok(tok) || tok_is(tok, "else") || tok_is(tok, "do") || tok_is(tok, "try") || tok_is(tok, "finally"))) {
       break;
     }
-    if (cv->lang == LANG_KOTLIN && j > i && paren == 0 && bracket == 0 && kotlin_line_break(cv, j)) {
+    if (cv->lang == LANG_KOTLIN && j > i && paren == 0 && bracket == 0 && kotlin_line_break(cv, j, i)) {
       break;
     }
     if (tok_is(tok, "|")) {

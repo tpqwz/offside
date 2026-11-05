@@ -745,10 +745,16 @@ export function lex(source: string, profile: Profile): { tokens: Tok[]; notes: L
     }
     const from = snapshot();
     if (profile.id === "kotlin" && source.startsWith("?:", i)) {
-      bump();
-      bump();
-      push("punct", from);
-      continue;
+      let k = i + 2;
+      while (source[k] === " " || source[k] === "\t") k++;
+      const end = k >= source.length || source[k] === "\n" || source[k] === "\r" || source.startsWith("//", k);
+      // `File?:` is a nullable type and the block colon. `a ?: b` is elvis.
+      if (!end) {
+        bump();
+        bump();
+        push("punct", from);
+        continue;
+      }
     }
     if (profile.id === "kotlin") {
       const bang = source.startsWith("!is", i) ? "!is" : source.startsWith("!in", i) ? "!in" : "";
