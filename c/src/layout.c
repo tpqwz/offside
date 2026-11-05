@@ -1232,16 +1232,8 @@ static const char *terminator_of(const LogicalLine *line, bool opened, bool hang
 }
 
 static void seg_push(Arena *arena, SegBuf *segs, const char *text, bool inserted) {
-  OutSeg *prev;
   if (text == NULL || text[0] == '\0') {
     return;
-  }
-  if (segs->len > 0) {
-    prev = &segs->items[segs->len - 1u];
-    if (prev->inserted == inserted) {
-      prev->text = arena_join(arena, prev->text, strlen(prev->text), text, strlen(text));
-      return;
-    }
   }
   if (segs->len == segs->cap) {
     segs->items = grow_to(segs->items, &segs->cap, segs->len + 1u, sizeof(OutSeg));
@@ -1249,6 +1241,7 @@ static void seg_push(Arena *arena, SegBuf *segs, const char *text, bool inserted
   segs->items[segs->len].text = text;
   segs->items[segs->len].inserted = inserted;
   segs->len++;
+  (void)arena;
 }
 
 static bool ends_space(const char *text) {
@@ -1355,6 +1348,10 @@ static void explode_into(Layout *lx, const OutSeg *segs, size_t nsegs, int sourc
   size_t cap = 0;
   int line_no = source_line;
   size_t s;
+  Buf run;
+  bool run_on = false;
+  bool run_inserted = false;
+  buf_init(&run);
   for (s = 0; s < nsegs; s++) {
     const char *text = segs[s].text == NULL ? "" : segs[s].text;
     bool inserted = segs[s].inserted;
@@ -1364,19 +1361,33 @@ static void explode_into(Layout *lx, const OutSeg *segs, size_t nsegs, int sourc
     for (i = 0; i <= len; i++) {
       if (i == len || text[i] == '\n') {
         if (i > from) {
-          const char *part = arena_copy(lx->arena, text + from, i - from);
-          if (ncur > 0 && current[ncur - 1u].inserted == inserted) {
-            current[ncur - 1u].text = arena_join(lx->arena, current[ncur - 1u].text, strlen(current[ncur - 1u].text), part, strlen(part));
-          } else {
+          if (run_on && run_inserted != inserted) {
+            char *joined = buf_arena(&run, lx->arena);
             if (ncur == cap) {
               current = grow_to(current, &cap, ncur + 1u, sizeof(OutSeg));
             }
-            current[ncur].text = part;
-            current[ncur].inserted = inserted;
+            current[ncur].text = joined;
+            current[ncur].inserted = run_inserted;
             ncur++;
+            buf_clear(&run);
+            run_on = false;
           }
+          buf_append(&run, text + from, i - from);
+          run_on = true;
+          run_inserted = inserted;
         }
         if (i < len && text[i] == '\n') {
+          if (run_on) {
+            char *joined = buf_arena(&run, lx->arena);
+            if (ncur == cap) {
+              current = grow_to(current, &cap, ncur + 1u, sizeof(OutSeg));
+            }
+            current[ncur].text = joined;
+            current[ncur].inserted = run_inserted;
+            ncur++;
+            buf_clear(&run);
+            run_on = false;
+          }
           push_out_line(lx, copy_segs(lx->arena, current, ncur), ncur, line_no);
           free(current);
           current = NULL;
@@ -1388,8 +1399,18 @@ static void explode_into(Layout *lx, const OutSeg *segs, size_t nsegs, int sourc
       }
     }
   }
+  if (run_on) {
+    char *joined = buf_arena(&run, lx->arena);
+    if (ncur == cap) {
+      current = grow_to(current, &cap, ncur + 1u, sizeof(OutSeg));
+    }
+    current[ncur].text = joined;
+    current[ncur].inserted = run_inserted;
+    ncur++;
+  }
   push_out_line(lx, copy_segs(lx->arena, current, ncur), ncur, line_no);
   free(current);
+  buf_free(&run);
 }
 
 static char **split_top_commas(Arena *arena, const char *inner, size_t n, size_t *out_n) {

@@ -286,7 +286,8 @@ async function runPascal(
     const compileOnly = ccFlags.includes("-c");
     const hasOut = ccFlags.includes("-o") || ccFlags.some((flag) => flag.startsWith("-o"));
     const binary = path.join(dir, path.basename(hostName, ".pas"));
-    const args = [`-Fu${pascalUnits()}`, `-Fu${path.dirname(sourcePath)}`, ...ccFlags, hostPath];
+    const fpcFlags = ccFlags.filter((flag) => flag !== "-c");
+    const args = [`-Fu${pascalUnits()}`, `-Fu${path.dirname(sourcePath)}`, ...fpcFlags, hostPath];
     if (!compileOnly && !hasOut) args.push(`-o${binary}`);
     const compiled = await spawnMapped(compiler, args, remap, dir);
     if (compiled !== 0 || compileOnly) return compiled;

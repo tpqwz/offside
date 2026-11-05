@@ -659,7 +659,9 @@ static int run_pascal(Arena *arena, const char *compiler, const char *source_pat
   {
     size_t i;
     for (i = 0; i < cc_flags->len; i++) {
-      args_push(&args, cc_flags->items[i]);
+      if (strcmp(cc_flags->items[i], "-c") != 0) {
+        args_push(&args, cc_flags->items[i]);
+      }
     }
   }
   args_push(&args, host_path);
