@@ -1,0 +1,18 @@
+{
+  "name": "tree-sitter-offsidejava",
+  "version": "0.1.0-alpha.1",
+  "description": "Tree-sitter highlighter for the offside dialect of Java. Not the compiler.",
+  "main": "bindings/node",
+  "license": "MIT",
+  "treeSitter": [
+    {
+      "scope": "source.offside.java",
+      "fileTypes": [
+        "sjava"
+      ],
+      "highlights": [
+        "queries/highlights.scm"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "grammars": [
+    {
+      "name": "offsidezig",
+      "camelcase": "offsidezig",
+      "scope": "source.offside.zig",
+      "path": ".",
+      "fileTypes": [
+        "szig"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0-alpha.1",
+    "license": "MIT",
+    "description": "Highlighter for the offside dialect of Zig.",
+    "links": {
+      "repository": "https://github.com/tpqwz/offside"
+    }
+  }
+}

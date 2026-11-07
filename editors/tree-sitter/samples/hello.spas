@@ -1,0 +1,12 @@
+{$mode objfpc}{$H+}
+
+program Demo:
+
+    function Sign(N: Integer): Integer:
+        if N < 0 then:
+            Sign := -1
+        else:
+            Sign := 1
+
+    if Sign(2) <> 1 then Halt(1)
+    WriteLn('ok')

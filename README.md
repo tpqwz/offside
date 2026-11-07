@@ -101,6 +101,10 @@ The Pascal tests compile with FPC. The C tests compile with the C compiler on `P
 
 `scripts/pascal-corpus.ts` walks a Lazarus tree and checks that a second trip through the dialect does not move tokens (other than `begin`/`end`) or compiler directives.
 
+## Editors
+
+Highlighting grammars for the six spaced dialects are in [editors/tree-sitter](editors/tree-sitter). They are for Neovim, Helix, Zed, Emacs, and VS Code. They are not the compiler.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

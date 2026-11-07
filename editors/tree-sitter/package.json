@@ -1,0 +1,10 @@
+{
+  "name": "offside-tree-sitter",
+  "private": true,
+  "version": "0.1.0-alpha.1",
+  "description": "Dev dependency for regenerating the highlighting grammars. Not published. Not the compiler.",
+  "license": "MIT",
+  "dependencies": {
+    "tree-sitter-cli": "^0.25.10"
+  }
+}

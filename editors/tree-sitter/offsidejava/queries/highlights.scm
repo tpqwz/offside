@@ -1,0 +1,11 @@
+(comment) @comment
+(string) @string
+(number) @number
+(keyword) @keyword
+(builtin) @function.builtin
+(block_colon) @punctuation.delimiter
+(operator) @operator
+(punctuation) @punctuation
+(identifier) @variable
+(character) @character
+(preproc) @keyword.directive

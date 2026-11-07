@@ -1,0 +1,12 @@
+const std = @import("std")
+
+const Point = struct:
+    x: i32,
+    y: i32,
+
+pub fn main() void:
+    const x = blk:
+        break :blk 1
+    while (x < 3) : (x += 1):
+        if (x == 1):
+            continue

@@ -1,0 +1,22 @@
+{
+  "grammars": [
+    {
+      "name": "offsidepascal",
+      "camelcase": "offsidepascal",
+      "scope": "source.offside.pascal",
+      "path": ".",
+      "fileTypes": [
+        "spas"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0-alpha.1",
+    "license": "MIT",
+    "description": "Highlighter for the offside dialect of Pascal.",
+    "links": {
+      "repository": "https://github.com/tpqwz/offside"
+    }
+  }
+}

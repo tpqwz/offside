@@ -1,0 +1,22 @@
+{
+  "grammars": [
+    {
+      "name": "offsidejava",
+      "camelcase": "offsidejava",
+      "scope": "source.offside.java",
+      "path": ".",
+      "fileTypes": [
+        "sjava"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0-alpha.1",
+    "license": "MIT",
+    "description": "Highlighter for the offside dialect of Java.",
+    "links": {
+      "repository": "https://github.com/tpqwz/offside"
+    }
+  }
+}

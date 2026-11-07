@@ -1,0 +1,8 @@
+#define TS_HAS_BLOCK_COMMENT 1
+#define TS_HAS_PASCAL_COMMENT 0
+#define TS_SCANNER_CREATE tree_sitter_offsidejavascript_external_scanner_create
+#define TS_SCANNER_DESTROY tree_sitter_offsidejavascript_external_scanner_destroy
+#define TS_SCANNER_SERIALIZE tree_sitter_offsidejavascript_external_scanner_serialize
+#define TS_SCANNER_DESERIALIZE tree_sitter_offsidejavascript_external_scanner_deserialize
+#define TS_SCANNER_SCAN tree_sitter_offsidejavascript_external_scanner_scan
+#include "../../common/scanner.c"

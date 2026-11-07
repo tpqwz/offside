@@ -1,0 +1,10 @@
+fun greet(name: String?): String:
+    if (name == null):
+        return "hello"
+    return "hello, $name"
+
+fun main():
+    val on = flag ?: false
+    val label = when (items.size):
+        0 -> "empty"
+        else -> "many"

@@ -1,0 +1,22 @@
+{
+  "grammars": [
+    {
+      "name": "offsidejavascript",
+      "camelcase": "offsidejavascript",
+      "scope": "source.offside.javascript",
+      "path": ".",
+      "fileTypes": [
+        "sjs"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0-alpha.1",
+    "license": "MIT",
+    "description": "Highlighter for the offside dialect of JavaScript.",
+    "links": {
+      "repository": "https://github.com/tpqwz/offside"
+    }
+  }
+}

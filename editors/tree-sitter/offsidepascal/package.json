@@ -1,0 +1,18 @@
+{
+  "name": "tree-sitter-offsidepascal",
+  "version": "0.1.0-alpha.1",
+  "description": "Tree-sitter highlighter for the offside dialect of Pascal. Not the compiler.",
+  "main": "bindings/node",
+  "license": "MIT",
+  "treeSitter": [
+    {
+      "scope": "source.offside.pascal",
+      "fileTypes": [
+        "spas"
+      ],
+      "highlights": [
+        "queries/highlights.scm"
+      ]
+    }
+  ]
+}

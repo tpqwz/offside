@@ -1,0 +1,9 @@
+class Greeter:
+    String hello(String name):
+        if (name == null):
+            return "hello"
+        return "hello, " + name
+
+    public static void main(String[] args):
+        for (String s : args):
+            System.out.println(s)

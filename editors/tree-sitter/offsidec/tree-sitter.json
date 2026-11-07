@@ -1,0 +1,22 @@
+{
+  "grammars": [
+    {
+      "name": "offsidec",
+      "camelcase": "offsidec",
+      "scope": "source.offside.c",
+      "path": ".",
+      "fileTypes": [
+        "csp"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0-alpha.1",
+    "license": "MIT",
+    "description": "Highlighter for the offside dialect of C.",
+    "links": {
+      "repository": "https://github.com/tpqwz/offside"
+    }
+  }
+}

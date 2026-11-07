@@ -1,0 +1,18 @@
+{
+  "name": "tree-sitter-offsidejavascript",
+  "version": "0.1.0-alpha.1",
+  "description": "Tree-sitter highlighter for the offside dialect of JavaScript. Not the compiler.",
+  "main": "bindings/node",
+  "license": "MIT",
+  "treeSitter": [
+    {
+      "scope": "source.offside.javascript",
+      "fileTypes": [
+        "sjs"
+      ],
+      "highlights": [
+        "queries/highlights.scm"
+      ]
+    }
+  ]
+}
