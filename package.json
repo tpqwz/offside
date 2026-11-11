@@ -1,6 +1,6 @@
 {
   "name": "offside",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Alpha. A spaced dialect of C and Pascal. Indent and a colon, both ways, and the host compiler still accepts it.",
   "license": "MIT",
   "type": "module",

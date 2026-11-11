@@ -27,7 +27,7 @@
 #define DIR_SEP '/'
 #endif
 
-#define VERSION "0.1.0-alpha.1"
+#define VERSION "0.1.0-alpha.2"
 
 static const char HELP[] =
   "offside " VERSION "\n"

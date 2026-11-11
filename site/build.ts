@@ -16,7 +16,7 @@ if (!built.success) {
   process.exit(1);
 }
 
-const html = readFileSync("site/index.html", "utf8").replaceAll("0.1.0-alpha.1", version);
+const html = readFileSync("site/index.html", "utf8").replaceAll("0.1.0-alpha.2", version);
 writeFileSync("site/dist/index.html", html);
 writeFileSync("site/dist/site.css", readFileSync("site/site.css"));
 console.log(`site/dist ready (${version})`);

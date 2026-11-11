@@ -10,7 +10,7 @@ on:
       tag:
         description: Release tag to attach the binaries to
         required: true
-        default: v0.1.0-alpha.1
+        default: v0.1.0-alpha.2
         type: string
 
 permissions:

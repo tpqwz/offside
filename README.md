@@ -1,6 +1,6 @@
 # offside
 
-Version 0.1.0-alpha.1. This is alpha.
+Version 0.1.0-alpha.2. This is alpha.
 
 offside is a spaced dialect of C and Pascal. A colon and an indent stand where the host language wants braces or `begin`/`end`. The same tool reads host source into that dialect and writes the dialect back out. The host compiler is the test that it worked.
 

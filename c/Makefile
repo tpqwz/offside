@@ -7,6 +7,11 @@ CFLAGS ?=
 CPPFLAGS ?= -Isrc
 LDFLAGS ?=
 
+# MinGW's stack protector lives in libssp-0.dll. Link it in so the zip is one exe.
+ifneq ($(findstring mingw,$(CC)),)
+LDFLAGS += -static
+endif
+
 SRC := src/rt.c src/engine.c src/lang.c src/lex.c src/host.c src/layout.c src/pascal.c src/spaced.c src/main.c
 BUILD := build
 OBJ := $(patsubst src/%.c,$(BUILD)/%.o,$(SRC))

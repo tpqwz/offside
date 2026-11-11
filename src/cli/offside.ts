@@ -9,7 +9,7 @@ import { layoutSource } from "../lib/layout/layout.ts";
 import { toSpaced } from "../lib/layout/spaced.ts";
 import type { LangId, LayoutNote, LayoutResult } from "../lib/layout/types.ts";
 
-export const VERSION = "0.1.0-alpha.1";
+export const VERSION = "0.1.0-alpha.2";
 
 const HELP = `offside ${VERSION}
 
