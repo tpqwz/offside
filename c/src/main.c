@@ -258,33 +258,139 @@ static void print_notes(const char *file, const Note *notes, size_t n) {
   }
 }
 
+#ifdef _WIN32
+static void append_arg(Buf *buf, const char *arg) {
+  const char *p;
+  int quote = arg[0] == '\0';
+  for (p = arg; *p != '\0'; p++) {
+    if (*p == ' ' || *p == '\t' || *p == '"') {
+      quote = 1;
+      break;
+    }
+  }
+  if (buf->len > 0) {
+    buf_putc(buf, ' ');
+  }
+  if (!quote) {
+    buf_puts(buf, arg);
+    return;
+  }
+  buf_putc(buf, '"');
+  for (p = arg; *p != '\0'; p++) {
+    if (*p == '"') {
+      buf_putc(buf, '\\');
+    }
+    buf_putc(buf, *p);
+  }
+  buf_putc(buf, '"');
+}
+
+static void consume_diag(Buf *pending, Arena *arena, const char *generated, const char *source_name, const int *map,
+                         size_t nmap, bool remap) {
+  size_t off = 0;
+  while (off < pending->len) {
+    char *nl = memchr(pending->data + off, '\n', pending->len - off);
+    size_t end;
+    char saved;
+    char *line;
+    if (nl == NULL) {
+      break;
+    }
+    end = (size_t)(nl - pending->data) + 1u;
+    saved = pending->data[end - 1u];
+    pending->data[end - 1u] = '\0';
+    line = pending->data + off;
+    if (remap) {
+      fputs(remap_diagnostics(arena, line, generated, source_name, map, nmap), stderr);
+    } else {
+      fputs(line, stderr);
+    }
+    fputc('\n', stderr);
+    pending->data[end - 1u] = saved;
+    off = end;
+  }
+  if (off > 0 && off <= pending->len) {
+    memmove(pending->data, pending->data + off, pending->len - off);
+    pending->len -= off;
+    if (pending->data != NULL) {
+      pending->data[pending->len] = '\0';
+    }
+  }
+}
+#endif
+
 static int spawn_mapped(const char *cmd, const ArgList *args, const char *cwd, Arena *arena,
                         const char *generated, const char *source_name, const int *map, size_t nmap, bool remap) {
 #ifdef _WIN32
-  (void)cwd;
-  (void)arena;
-  (void)generated;
-  (void)source_name;
-  (void)map;
-  (void)nmap;
-  (void)remap;
-  {
-    const char **argv = rt_malloc_array(args->len + 2u, sizeof(char *));
-    size_t i;
-    intptr_t code;
-    argv[0] = cmd;
-    for (i = 0; i < args->len; i++) {
-      argv[i + 1u] = args->items[i];
+  SECURITY_ATTRIBUTES inherit;
+  HANDLE read_end = NULL;
+  HANDLE write_end = NULL;
+  STARTUPINFOA start;
+  PROCESS_INFORMATION proc;
+  Buf command_line;
+  Buf pending;
+  char tmp[1024];
+  DWORD got = 0;
+  DWORD code = 1;
+  size_t i;
+  inherit.nLength = sizeof inherit;
+  inherit.lpSecurityDescriptor = NULL;
+  inherit.bInheritHandle = TRUE;
+  if (!CreatePipe(&read_end, &write_end, &inherit, 0) || !SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0)) {
+    fprintf(stderr, "%s: cannot capture diagnostics\n", cmd);
+    if (read_end != NULL) {
+      CloseHandle(read_end);
     }
-    argv[args->len + 1u] = NULL;
-    code = _spawnvp(_P_WAIT, cmd, argv);
-    free(argv);
-    if (code == -1) {
-      fprintf(stderr, "%s: %s\n", cmd, strerror(errno));
-      return 127;
+    if (write_end != NULL) {
+      CloseHandle(write_end);
     }
-    return (int)code;
+    return 127;
   }
+  memset(&start, 0, sizeof start);
+  start.cb = sizeof start;
+  start.dwFlags = STARTF_USESTDHANDLES;
+  start.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  start.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+  start.hStdError = write_end;
+  buf_init(&command_line);
+  append_arg(&command_line, cmd);
+  for (i = 0; i < args->len; i++) {
+    append_arg(&command_line, args->items[i]);
+  }
+  buf_putc(&command_line, '\0');
+  memset(&proc, 0, sizeof proc);
+  if (!CreateProcessA(NULL, command_line.data, NULL, NULL, TRUE, 0, NULL,
+                      (cwd != NULL && cwd[0] != '\0') ? cwd : NULL, &start, &proc)) {
+    fprintf(stderr, "%s: cannot start (%lu)\n", cmd, (unsigned long)GetLastError());
+    buf_free(&command_line);
+    CloseHandle(write_end);
+    CloseHandle(read_end);
+    return 127;
+  }
+  buf_free(&command_line);
+  CloseHandle(write_end);
+  buf_init(&pending);
+  while (ReadFile(read_end, tmp, sizeof tmp, &got, NULL) && got > 0) {
+    buf_append(&pending, tmp, (size_t)got);
+    consume_diag(&pending, arena, generated, source_name, map, nmap, remap);
+  }
+  if (pending.len > 0) {
+    if (remap) {
+      fputs(remap_diagnostics(arena, pending.data, generated, source_name, map, nmap), stderr);
+    } else {
+      fputs(pending.data, stderr);
+    }
+    if (pending.data[pending.len - 1u] != '\n') {
+      fputc('\n', stderr);
+    }
+  }
+  buf_free(&pending);
+  CloseHandle(read_end);
+  WaitForSingleObject(proc.hProcess, INFINITE);
+  GetExitCodeProcess(proc.hProcess, &code);
+  CloseHandle(proc.hThread);
+  CloseHandle(proc.hProcess);
+  return (int)code;
 #else
   int pipefd[2];
   pid_t pid;
@@ -418,7 +524,36 @@ static char *make_temp(void) {
 
 static void rm_tree(const char *path) {
 #ifdef _WIN32
-  (void)path;
+  char pattern[MAX_PATH];
+  char child[MAX_PATH];
+  WIN32_FIND_DATAA data;
+  HANDLE found;
+  int wrote;
+  wrote = snprintf(pattern, sizeof pattern, "%s\\*", path);
+  if (wrote < 0 || (size_t)wrote >= sizeof pattern) {
+    return;
+  }
+  found = FindFirstFileA(pattern, &data);
+  if (found == INVALID_HANDLE_VALUE) {
+    RemoveDirectoryA(path);
+    return;
+  }
+  do {
+    if (strcmp(data.cFileName, ".") == 0 || strcmp(data.cFileName, "..") == 0) {
+      continue;
+    }
+    wrote = snprintf(child, sizeof child, "%s\\%s", path, data.cFileName);
+    if (wrote < 0 || (size_t)wrote >= sizeof child) {
+      continue;
+    }
+    if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+      rm_tree(child);
+    } else {
+      DeleteFileA(child);
+    }
+  } while (FindNextFileA(found, &data));
+  FindClose(found);
+  RemoveDirectoryA(path);
 #else
   DIR *dir = opendir(path);
   struct dirent *ent;
