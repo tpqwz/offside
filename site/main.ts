@@ -3,6 +3,12 @@ import { LANGS, PROFILES } from "../src/lib/layout/languages.ts";
 import { toSpaced } from "../src/lib/layout/spaced.ts";
 import type { LangId, LayoutNote } from "../src/lib/layout/types.ts";
 
+declare const __HELLO__: string;
+declare const __POINT__: string;
+declare const __FIZZBUZZ__: string;
+declare const __LIST__: string;
+declare const __CLASSIFY__: string;
+
 declare const __OFFSIDE_VERSION__: string;
 
 type Direction = "to-host" | "to-spaced";
@@ -23,11 +29,25 @@ let direction: Direction = "to-host";
 
 document.querySelector(".kicker")!.textContent = `${__OFFSIDE_VERSION__} · layout pass, not a compiler`;
 
+const SPACED: Record<LangId, string> = {
+  c: "out.csp",
+  java: "Out.sjava",
+  javascript: "out.sjs",
+  pascal: "out.spas",
+  zig: "out.szig",
+  kotlin: "out.skt",
+};
+
+const C_PROGRAMS = [
+  { id: "hello", label: "Hello", source: __HELLO__ },
+  { id: "point", label: "Point", source: __POINT__ },
+  { id: "fizzbuzz", label: "Fizzbuzz", source: __FIZZBUZZ__ },
+  { id: "list", label: "List", source: __LIST__ },
+  { id: "classify", label: "Classify", source: __CLASSIFY__ },
+];
+
 function spacedName(id: LangId): string {
-  if (id === "c") return "out.csp";
-  if (id === "java") return "Out.sjava";
-  if (id === "pascal") return "out.spas";
-  return "out.sjs";
+  return SPACED[id];
 }
 
 function convert(text: string): { code: string; notes: LayoutNote[] } {
@@ -72,8 +92,9 @@ function loadExample(id: string): void {
 }
 
 function drawExamples(): void {
+  const examples = lang === "c" ? [...C_PROGRAMS, ...PROFILES.c.examples] : PROFILES[lang].examples;
   examplesEl.replaceChildren(
-    ...PROFILES[lang].examples.map((example) => {
+    ...examples.map((example) => {
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.example = example.id;

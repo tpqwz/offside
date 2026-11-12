@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const version = JSON.parse(readFileSync("package.json", "utf8")).version as string;
+const example = (name: string) => readFileSync(`examples/${name}.csp`, "utf8");
 mkdirSync("site/dist", { recursive: true });
 
 const built = await Bun.build({
@@ -8,7 +9,14 @@ const built = await Bun.build({
   outdir: "site/dist",
   target: "browser",
   naming: "app.js",
-  define: { __OFFSIDE_VERSION__: JSON.stringify(version) },
+  define: {
+    __OFFSIDE_VERSION__: JSON.stringify(version),
+    __HELLO__: JSON.stringify(example("hello")),
+    __POINT__: JSON.stringify(example("point")),
+    __FIZZBUZZ__: JSON.stringify(example("fizzbuzz")),
+    __LIST__: JSON.stringify(example("list")),
+    __CLASSIFY__: JSON.stringify(example("classify")),
+  },
 });
 
 if (!built.success) {
