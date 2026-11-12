@@ -51,6 +51,7 @@ static const char HELP[] =
   "  --cc <compiler>            C compiler, else tcc or cc\n"
   "  --keep                     leave the host file on disk\n"
   "  --plain                    emit host code without #line\n"
+  "  -v, --verbose              print each step on stderr\n"
   "  --version                  print " VERSION "\n"
   "\n"
   "  emit turns spaced source into host code.\n"
@@ -95,6 +96,7 @@ typedef struct Plan {
   const char *cc;
   bool keep;
   bool plain;
+  bool verbose;
   ArgList cc_flags;
   ArgList program_args;
 } Plan;
@@ -535,10 +537,32 @@ static const char *pascal_units(Arena *arena, const char *compiler) {
   return "/workspace/.tools/fpc/lib/fpc/3.2.2/units/x86_64-linux/rtl";
 }
 
+static bool verbose = false;
+
+static void say_exec(const char *cmd, const ArgList *args) {
+  size_t i;
+  if (!verbose) {
+    return;
+  }
+  fputs("offside: exec ", stderr);
+  fputs(cmd, stderr);
+  for (i = 0; i < args->len; i++) {
+    fputc(' ', stderr);
+    fputs(args->items[i], stderr);
+  }
+  fputc('\n', stderr);
+}
+
 static int run_tool(const char *compiler, ArgList *args, const char *cwd, Arena *arena, const char *generated,
                     const char *source_name, const HostFile *host, bool report) {
-  return spawn_mapped(compiler, args, cwd, arena, generated, source_name,
+  int code;
+  say_exec(compiler, args);
+  code = spawn_mapped(compiler, args, cwd, arena, generated, source_name,
                       host == NULL ? NULL : host->line_map, host == NULL ? 0 : host->nmap, report);
+  if (verbose) {
+    fprintf(stderr, "offside: exit %d\n", code);
+  }
+  return code;
 }
 
 static const char *stem_copy(Arena *arena, const char *file);
@@ -925,6 +949,10 @@ static int parse_plan(int argc, char **argv, Plan *plan, const char **error) {
         plan->plain = true;
         continue;
       }
+      if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
+        plan->verbose = true;
+        continue;
+      }
       if (strcmp(argv[i], "--lang") == 0 || strcmp(argv[i], "-l") == 0) {
         if (i + 1 >= argc) {
           *error = "--lang needs c, java, javascript, pascal, zig, or kotlin.";
@@ -967,6 +995,38 @@ static int parse_plan(int argc, char **argv, Plan *plan, const char **error) {
   return 0;
 }
 
+static const char *command_name(Command command) {
+  if (command == CMD_SPACE) {
+    return "space";
+  }
+  if (command == CMD_EMIT) {
+    return "emit";
+  }
+  if (command == CMD_RUN) {
+    return "run";
+  }
+  return "help";
+}
+
+static const char *lang_name(LangId lang) {
+  if (lang == LANG_JAVA) {
+    return "java";
+  }
+  if (lang == LANG_JAVASCRIPT) {
+    return "javascript";
+  }
+  if (lang == LANG_PASCAL) {
+    return "pascal";
+  }
+  if (lang == LANG_ZIG) {
+    return "zig";
+  }
+  if (lang == LANG_KOTLIN) {
+    return "kotlin";
+  }
+  return "c";
+}
+
 static int execute(Plan *plan) {
   Arena *scratch;
   SourceKind kind;
@@ -975,6 +1035,7 @@ static int execute(Plan *plan) {
   const char *read_error = NULL;
   Result laid;
   int code = 0;
+  verbose = plan->verbose;
   if (plan->command == CMD_HELP || plan->file == NULL) {
     fputs(HELP, stdout);
     return 0;
@@ -991,6 +1052,10 @@ static int execute(Plan *plan) {
     fprintf(stderr, "%s\n", read_error == NULL ? "cannot read file" : read_error);
     arena_free(scratch);
     return 1;
+  }
+  if (verbose) {
+    fprintf(stderr, "offside: %s %s %s %s\n", command_name(plan->command), lang_name(kind.lang),
+            kind.host ? "host" : "spaced", plan->file);
   }
   if (plan->command == CMD_SPACE) {
     Result spaced = to_spaced(source, len, kind.lang);

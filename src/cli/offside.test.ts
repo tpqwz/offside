@@ -176,4 +176,28 @@ int main(void) {
     assert.equal(emitted.status, 2);
     assert.match(emitted.stderr, /offside space/);
   });
+
+  it("prints the steps on stderr and leaves the program output alone", () => {
+    const parsed = parseArgs(["run", "-v", "hello.csp", "--", "-O2"]);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    assert.equal(parsed.plan.verbose, true);
+    assert.deepEqual(parsed.plan.ccFlags, ["-O2"]);
+
+    const dir = mkdtempSync(path.join(tmpdir(), "offside-cli-"));
+    const file = path.join(dir, "hello.csp");
+    writeFileSync(file, "#include <stdio.h>\nint main(void):\n    puts(\"ok\")\n    return 0\n");
+    const emitted = offside(["emit", "--verbose", file]);
+    assert.equal(emitted.status, 0, emitted.stderr);
+    assert.match(emitted.stdout, /int main\(void\) \{/);
+    assert.match(emitted.stderr, new RegExp(`offside: emit c spaced ${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.doesNotMatch(emitted.stderr, /offside: exec/);
+
+    const ran = offside(["run", "-v", file]);
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.equal(ran.stdout, "ok\n");
+    assert.match(ran.stderr, /offside: run c spaced /);
+    assert.match(ran.stderr, /offside: exec /);
+    assert.match(ran.stderr, /offside: exit 0/);
+  });
 });

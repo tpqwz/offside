@@ -32,6 +32,7 @@ offside space <file>
   --cc <compiler>            C compiler, else tcc or cc
   --keep                     leave the host file on disk
   --plain                    emit host code without #line
+  -v, --verbose              print each step on stderr
   --version                  print ${VERSION}
 
   emit turns spaced source into host code.
@@ -52,6 +53,7 @@ export interface Plan {
   cc?: string;
   keep: boolean;
   plain: boolean;
+  verbose: boolean;
   ccFlags: string[];
   programArgs: string[];
 }
@@ -87,6 +89,10 @@ export function parseArgs(args: string[]): { ok: true; plan: Plan } | { ok: fals
       plan.plain = true;
       continue;
     }
+    if (arg === "--verbose" || arg === "-v") {
+      plan.verbose = true;
+      continue;
+    }
     if (arg === "--lang" || arg === "-l") {
       const value = group[++i];
       if (!value) return { ok: false, error: `${arg} needs c, java, javascript, pascal, zig, or kotlin.` };
@@ -112,7 +118,18 @@ export function parseArgs(args: string[]): { ok: true; plan: Plan } | { ok: fals
 }
 
 function emptyPlan(command: Plan["command"]): Plan {
-  return { command, keep: false, plain: false, ccFlags: [], programArgs: [] };
+  return { command, keep: false, plain: false, verbose: false, ccFlags: [], programArgs: [] };
+}
+
+let verbose = false;
+
+function say(line: string): void {
+  if (verbose) process.stderr.write(`offside: ${line}\n`);
+}
+
+function sayExec(cmd: string, args: string[]): void {
+  if (!verbose) return;
+  process.stderr.write(`offside: exec ${[cmd, ...args].join(" ")}\n`);
 }
 
 function commandExists(file: string): boolean {
@@ -169,9 +186,17 @@ function spawnMapped(
   remap: (text: string) => string,
   cwd = process.cwd(),
 ): Promise<number> {
+  sayExec(cmd, args);
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, stdio: ["inherit", "pipe", "pipe"] });
     let pending = "";
+    let settled = false;
+    const finish = (status: number) => {
+      if (settled) return;
+      settled = true;
+      say(`exit ${status}`);
+      resolve(status);
+    };
     const writeErr = (chunk: string) => {
       pending += chunk;
       const lines = pending.split("\n");
@@ -182,11 +207,11 @@ function spawnMapped(
     child.stderr?.on("data", (chunk: Buffer) => writeErr(chunk.toString("utf8")));
     child.on("error", (error) => {
       process.stderr.write(`${cmd}: ${error.message}\n`);
-      resolve(127);
+      finish(127);
     });
     child.on("close", (code, signal) => {
       if (pending) process.stderr.write(remap(pending.endsWith("\n") ? pending : `${pending}\n`));
-      resolve(statusOf(code, signal));
+      finish(statusOf(code, signal));
     });
   });
 }
@@ -412,6 +437,7 @@ async function runJavaScript(
 }
 
 export async function runPlan(plan: Plan): Promise<number> {
+  verbose = plan.verbose;
   if (plan.command === "help" || !plan.file) {
     process.stdout.write(HELP);
     return 0;
@@ -431,6 +457,7 @@ export async function runPlan(plan: Plan): Promise<number> {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
+  say(`${plan.command} ${kind.lang} ${kind.host ? "host" : "spaced"} ${plan.file}`);
   if (plan.command === "space") {
     const spaced = toSpaced(source, kind.lang);
     printNotes(sourcePath, spaced.notes);
