@@ -105,6 +105,7 @@ function render(): void {
   sourceLabel.textContent = direction === "to-host" ? "Spaced source" : "Host source";
 
   const lines = result.lines.length > 0 ? result.lines : plainLines(result.code);
+  const empty = result.code.length === 0;
   outputEl.replaceChildren(
     ...lines.map((line) => {
       const row = document.createElement("span");
@@ -126,29 +127,44 @@ function render(): void {
   gutter(outGutter, lines.map((line) => line.sourceLine || 1));
   const insertions = lines.reduce((sum, line) => sum + line.segments.filter((segment) => segment.inserted && segment.text !== "").length, 0);
   outName.textContent = direction === "to-host" ? "Host result" : "Spaced result";
-  outMeta.replaceChildren(
-    document.createTextNode(`${fileName()} · ${lines.length} line${lines.length === 1 ? "" : "s"} · ${insertions} insertion${insertions === 1 ? "" : "s"}`),
-  );
-  if (insertions > 0) {
+  outMeta.replaceChildren();
+  if (empty) {
+    outMeta.textContent = "Empty";
+  } else if (direction === "to-host") {
+    outMeta.append(
+      document.createTextNode(
+        `${fileName()} · ${lines.length} line${lines.length === 1 ? "" : "s"} · ${insertions} insertion${insertions === 1 ? "" : "s"}`,
+      ),
+    );
     const oxide = document.createElement("span");
     oxide.className = "oxide";
     oxide.textContent = " · oxide is new";
     outMeta.append(oxide);
+  } else {
+    outMeta.textContent = `${fileName()} · ${lines.length} line${lines.length === 1 ? "" : "s"} · colons replace braces`;
   }
 
   notesEl.replaceChildren();
   if (result.notes.length === 0) {
     const none = document.createElement("p");
-    none.textContent = "None. Labels, ternaries, and preprocessor lines were left alone.";
+    none.textContent = direction === "to-host"
+      ? "None. Labels, ternaries, and preprocessor lines were left alone."
+      : "None. Statement braces became colons. Initializers kept theirs.";
     notesEl.append(none);
   } else {
     for (const note of result.notes) {
-      const item = document.createElement("p");
-      item.textContent = `${note.line}: ${note.message}`;
+      const item = document.createElement("li");
+      const where = document.createElement("span");
+      where.textContent = `Line ${note.line}. `;
+      item.append(where, note.message);
       notesEl.append(item);
     }
   }
-  eventsEl.replaceChildren(
+  if (result.events.length === 0) {
+    const none = document.createElement("p");
+    none.textContent = direction === "to-host" ? "No blocks opened." : "The reverse pass does not record events.";
+    eventsEl.replaceChildren(none);
+  } else eventsEl.replaceChildren(
     ...result.events.map((event) => {
       const item = document.createElement("li");
       const line = document.createElement("span");
