@@ -19,24 +19,24 @@ function offside(args: string[], cwd = process.cwd()) {
 
 describe("offside cli", () => {
   it("parses compiler flags and program args", () => {
-    const parsed = parseArgs(["run", "hello.csp", "in.txt", "--", "-O2", "--", "more"]);
+    const parsed = parseArgs(["run", "hello.sc", "in.txt", "--", "-O2", "--", "more"]);
     assert.equal(parsed.ok, true);
     if (!parsed.ok) return;
-    assert.equal(parsed.plan.file, "hello.csp");
+    assert.equal(parsed.plan.file, "hello.sc");
     assert.deepEqual(parsed.plan.ccFlags, ["-O2"]);
     assert.deepEqual(parsed.plan.programArgs, ["in.txt", "more"]);
   });
 
   it("does not break a backslash continuation with #line", () => {
     const result = layoutSource("#define ADD(a, b) \\\n    ((a) + (b))\nint main(void):\n    return ADD(1, 2)\n", "c");
-    const host = renderHost(result, "/tmp/add.csp", true);
+    const host = renderHost(result, "/tmp/add.sc", true);
     assert.match(host.code, /#define ADD\(a, b\) \\\n {4}\(\(a\) \+ \(b\)\)/);
     assert.doesNotMatch(host.code, /\\\n#line/);
   });
 
   it("runs a spaced C file and maps a diagnostic to the spaced line", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "offside-cli-"));
-    const file = path.join(dir, "hello.csp");
+    const file = path.join(dir, "hello.sc");
     writeFileSync(
       file,
       `int a(void):
@@ -58,7 +58,7 @@ int main(int argc, char **argv):
     assert.equal(flagged.status, 0, flagged.stderr);
     assert.equal(flagged.stdout, "hi\n");
 
-    const bad = path.join(dir, "bad.csp");
+    const bad = path.join(dir, "bad.sc");
     writeFileSync(
       bad,
       `int a(void):
@@ -178,14 +178,14 @@ int main(void) {
   });
 
   it("prints the steps on stderr and leaves the program output alone", () => {
-    const parsed = parseArgs(["run", "-v", "hello.csp", "--", "-O2"]);
+    const parsed = parseArgs(["run", "-v", "hello.sc", "--", "-O2"]);
     assert.equal(parsed.ok, true);
     if (!parsed.ok) return;
     assert.equal(parsed.plan.verbose, true);
     assert.deepEqual(parsed.plan.ccFlags, ["-O2"]);
 
     const dir = mkdtempSync(path.join(tmpdir(), "offside-cli-"));
-    const file = path.join(dir, "hello.csp");
+    const file = path.join(dir, "hello.sc");
     writeFileSync(file, "#include <stdio.h>\nint main(void):\n    puts(\"ok\")\n    return 0\n");
     const emitted = offside(["emit", "--verbose", file]);
     assert.equal(emitted.status, 0, emitted.stderr);

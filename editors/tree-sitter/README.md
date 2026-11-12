@@ -18,7 +18,7 @@ Known limits, on purpose:
 
 | Dialect | Grammar | Extensions | Scope |
 |---|---|---|---|
-| C | `offsidec` | `.csp` | `source.offside.c` |
+| C | `offsidec` | `.sc` | `source.offside.c` |
 | Java | `offsidejava` | `.sjava` | `source.offside.java` |
 | JavaScript | `offsidejavascript` | `.sjs` | `source.offside.javascript` |
 | Pascal | `offsidepascal` | `.spas` | `source.offside.pascal` |
@@ -30,8 +30,8 @@ Each grammar directory has `src/parser.c` (ABI 15), `src/scanner.c`, and `querie
 Samples live in `samples/`. From a grammar directory, with the Tree-sitter CLI 0.25.10:
 
 ```bash
-tree-sitter parse ../samples/hello.csp
-tree-sitter query queries/highlights.scm ../samples/hello.csp
+tree-sitter parse ../samples/hello.sc
+tree-sitter query queries/highlights.scm ../samples/hello.sc
 ```
 
 To regenerate after editing `build-grammars.mjs` or `common/scanner.c`:
@@ -57,7 +57,7 @@ Repeat for the other five names. Queries must be on the runtime path as `queries
 ```lua
 vim.filetype.add({
   extension = {
-    csp = "offsidec",
+    sc = "offsidec",
     sjava = "offsidejava",
     sjs = "offsidejavascript",
     spas = "offsidepascal",
@@ -97,7 +97,7 @@ In `languages.toml`:
 [[language]]
 name = "offsidec"
 scope = "source.offside.c"
-file-types = ["csp"]
+file-types = ["sc"]
 roots = []
 comment-tokens = "//"
 indent = { tab-width = 4, unit = "    " }
@@ -138,7 +138,7 @@ Emacs 29 or later, with `treesit`. Install from the grammar directory (`src/pars
 (treesit-install-language-grammar 'offsidec)
 ```
 
-Repeat for the other five language symbols. `treesit-install-language-grammar` compiles `src/parser.c` and `src/scanner.c`. Load `queries/highlights.scm` with `treesit-font-lock-rules`, mapping `(keyword)` to `font-lock-keyword-face`, `(string)` and `(template)` and `(line_string)` to `font-lock-string-face`, `(comment)` to `font-lock-comment-face`, `(number)` to `font-lock-number-face`, and `(block_colon)`, `(operator)`, and `(punctuation)` to `font-lock-delimiter-face` or `font-lock-operator-face`. File associations: `.csp` to `offsidec`, `.sjava` to `offsidejava`, `.sjs` to `offsidejavascript`, `.spas` to `offsidepascal`, `.szig` to `offsidezig`, `.skt` to `offsidekotlin`.
+Repeat for the other five language symbols. `treesit-install-language-grammar` compiles `src/parser.c` and `src/scanner.c`. Load `queries/highlights.scm` with `treesit-font-lock-rules`, mapping `(keyword)` to `font-lock-keyword-face`, `(string)` and `(template)` and `(line_string)` to `font-lock-string-face`, `(comment)` to `font-lock-comment-face`, `(number)` to `font-lock-number-face`, and `(block_colon)`, `(operator)`, and `(punctuation)` to `font-lock-delimiter-face` or `font-lock-operator-face`. File associations: `.sc` to `offsidec`, `.sjava` to `offsidejava`, `.sjs` to `offsidejavascript`, `.spas` to `offsidepascal`, `.szig` to `offsidezig`, `.skt` to `offsidekotlin`.
 
 ## VS Code
 

@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const version = JSON.parse(readFileSync("package.json", "utf8")).version as string;
-const example = (name: string) => readFileSync(`examples/${name}.csp`, "utf8");
+const example = (name: string) => readFileSync(`examples/${name}.sc`, "utf8");
 mkdirSync("site/dist", { recursive: true });
 
 const built = await Bun.build({

@@ -32,7 +32,7 @@ let direction: Direction = "to-host";
 let resultText = "";
 
 const SPACED: Record<LangId, string> = {
-  c: "out.csp",
+  c: "out.sc",
   java: "Out.sjava",
   javascript: "out.sjs",
   pascal: "out.spas",

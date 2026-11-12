@@ -1,5 +1,5 @@
 # GitHub highlights these with the host language. It does not load editors/tree-sitter.
-*.csp linguist-language=C
+*.sc linguist-language=C
 *.sjava linguist-language=Java
 *.sjs linguist-language=JavaScript
 *.spas linguist-language=Pascal

@@ -17,12 +17,12 @@ offside run <file> [program args] [-- <compiler args>] [-- <program args>]
 offside emit <file> [--plain]
 offside space <file>
 
-  .csp .sjava .sjs .spas .szig .skt   spaced source
+  .sc .sjava .sjs .spas .szig .skt    spaced source
   .c .h .java .js .zig .kt       host C, Java, JavaScript, Zig, Kotlin
   .pas .pp .lpr .dpr .inc    host Pascal
 
-  offside run hello.csp -- -O2
-  offside emit hello.csp
+  offside run hello.sc -- -O2
+  offside emit hello.sc
   offside space hello.c
   offside run demo.spas
   offside run demo.szig

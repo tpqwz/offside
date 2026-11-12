@@ -10,11 +10,11 @@ all: $(BUILD)/offside
 $(BUILD)/offside: $(addprefix $(BUILD)/,$(addsuffix .c,$(UNITS))) $(BUILD)/engine.h $(BUILD)/rt.h
 	$(CC) $(WARN) -I$(BUILD) -o $@ $(filter %.c,$^)
 
-$(BUILD)/%.c: %.csp $(OFFSIDE)
+$(BUILD)/%.c: %.sc $(OFFSIDE)
 	mkdir -p $(BUILD)
 	$(OFFSIDE) emit --plain $< > $@
 
-$(BUILD)/%.h: %.h.csp $(OFFSIDE)
+$(BUILD)/%.h: %.h.sc $(OFFSIDE)
 	mkdir -p $(BUILD)
 	$(OFFSIDE) emit --plain $< > $@
 

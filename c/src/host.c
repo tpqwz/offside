@@ -42,7 +42,7 @@ static bool ext_is(const char *ext, const char *want) {
 }
 
 static bool spaced_ext(const char *ext, LangId *lang) {
-  if (ext_is(ext, ".csp")) {
+  if (ext_is(ext, ".sc")) {
     *lang = LANG_C;
     return true;
   }
@@ -122,7 +122,7 @@ SourceKind classify_file(const char *path, const char *override_lang) {
     kind.lang = host;
   } else {
     kind.ok = false;
-    kind.error = "Cannot tell the language. Use .c/.csp, .java/.sjava, .js/.sjs, .pas/.spas, .zig/.szig, .kt/.skt, or pass --lang.";
+    kind.error = "Cannot tell the language. Use .c/.sc, .java/.sjava, .js/.sjs, .pas/.spas, .zig/.szig, .kt/.skt, or pass --lang.";
     return kind;
   }
   kind.host = is_host && !is_spaced;

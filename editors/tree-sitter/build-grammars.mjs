@@ -82,7 +82,7 @@ const OPS = [
 ];
 
 const LANGS = [
-  { name: "offsidec", label: "C", scope: "source.offside.c", exts: ["csp"], keywords: C_KEYWORDS, kind: "c" },
+  { name: "offsidec", label: "C", scope: "source.offside.c", exts: ["sc"], keywords: C_KEYWORDS, kind: "c" },
   { name: "offsidejava", label: "Java", scope: "source.offside.java", exts: ["sjava"], keywords: JAVA_KEYWORDS, kind: "c" },
   { name: "offsidejavascript", label: "JavaScript", scope: "source.offside.javascript", exts: ["sjs"], keywords: JS_KEYWORDS, kind: "js" },
   { name: "offsidepascal", label: "Pascal", scope: "source.offside.pascal", exts: ["spas"], keywords: PASCAL_KEYWORDS, kind: "pascal" },

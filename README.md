@@ -59,8 +59,8 @@ Pascal needs Free Pascal (`ppcx64`). `FPC` or `OFFSIDE_FPC` picks the compiler. 
 
 ```bash
 offside space hello.c          # host to spaced
-offside emit hello.csp         # spaced to host
-offside run hello.csp -- -O2   # spaced or host, then the compiler
+offside emit hello.sc          # spaced to host
+offside run hello.sc -- -O2    # spaced or host, then the compiler
 offside run demo.spas -c       # compile and stop
 offside run demo.spas -o demo  # name the binary, then run it
 ```
@@ -69,7 +69,7 @@ offside run demo.spas -o demo  # name the binary, then run it
 
 | Extension | Source |
 | --- | --- |
-| `.csp` `.sjava` `.sjs` `.spas` `.szig` `.skt` | spaced |
+| `.sc` `.sjava` `.sjs` `.spas` `.szig` `.skt` | spaced |
 | `.c` `.h` | host C |
 | `.pas` `.pp` `.lpr` `.dpr` `.inc` | host Pascal |
 | `.java` `.js` `.zig` `.kt` | host Java, JavaScript, Zig, Kotlin |

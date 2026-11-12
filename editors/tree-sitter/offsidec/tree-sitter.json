@@ -6,7 +6,7 @@
       "scope": "source.offside.c",
       "path": ".",
       "fileTypes": [
-        "csp"
+        "sc"
       ],
       "highlights": "queries/highlights.scm"
     }

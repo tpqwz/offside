@@ -70,7 +70,7 @@ export function langOf(file: string, override?: string): LangId {
 }
 
 const SPACED_EXT: Record<string, LangId> = {
-  ".csp": "c",
+  ".sc": "c",
   ".sjava": "java",
   ".sjs": "javascript",
   ".spas": "pascal",
@@ -115,7 +115,7 @@ export function classifyFile(file: string, override?: string): SourceKind {
   } else if (spaced) lang = spaced;
   else if (host) lang = host;
   else {
-    throw new Error(`Cannot tell the language of ${file}. Use .c/.csp, .java/.sjava, .js/.sjs, .pas/.spas, .zig/.szig, .kt/.skt, or pass --lang.`);
+    throw new Error(`Cannot tell the language of ${file}. Use .c/.sc, .java/.sjava, .js/.sjs, .pas/.spas, .zig/.szig, .kt/.skt, or pass --lang.`);
   }
   return { lang, host: Boolean(host) && !spaced };
 }
