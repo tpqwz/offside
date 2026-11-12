@@ -68,9 +68,12 @@
         <div class="work">
           <section class="ledger sheet" id="source-pane" aria-label="Spaced source">
             <div class="sheet-bar">
-              <div>
+              <div class="sheet-title">
                 <h2 class="sheet-kicker" id="source-label">Spaced source</h2>
                 <p class="sheet-meta" id="line-count"></p>
+              </div>
+              <div class="actions">
+                <button type="button" class="plaque" id="open">Open</button>
               </div>
             </div>
             <div class="code-pair">
@@ -115,6 +118,7 @@
         </section>
       </main>
     </div>
+    <input id="file" type="file" class="sr" tabindex="-1" accept=".sc,.sjava,.sjs,.spas,.szig,.skt,.c,.h,.java,.js,.mjs,.cjs,.pas,.pp,.lpr,.dpr,.inc,.zig,.kt" />
     <script type="module" src="./app.js"></script>
   </body>
 </html>

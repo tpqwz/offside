@@ -30,6 +30,8 @@ body {
 
 .page { max-width: 72rem; margin: 0 auto; padding: 1rem 1rem 2.5rem; }
 
+body.is-drop .page { outline: 2px dashed var(--brass); outline-offset: -6px; }
+
 .top { display: grid; gap: 0.85rem; padding: 0.75rem 0 1rem; }
 
 .title-row {

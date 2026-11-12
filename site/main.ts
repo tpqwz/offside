@@ -1,5 +1,6 @@
 import { layoutSource } from "../src/lib/layout/layout.ts";
 import { LANGS, PROFILES } from "../src/lib/layout/languages.ts";
+import { baseName, classifyName, outputName, spacedExampleName } from "../src/lib/layout/names.ts";
 import { toSpaced } from "../src/lib/layout/spaced.ts";
 import type { LangId, LayoutEvent, LayoutNote, OutLine } from "../src/lib/layout/types.ts";
 
@@ -26,19 +27,20 @@ const lineCount = document.querySelector<HTMLElement>("#line-count")!;
 const outMeta = document.querySelector<HTMLElement>("#out-meta")!;
 const copyBtn = document.querySelector<HTMLButtonElement>("#copy")!;
 const saveBtn = document.querySelector<HTMLButtonElement>("#save")!;
+const openBtn = document.querySelector<HTMLButtonElement>("#open")!;
+const fileInput = document.querySelector<HTMLInputElement>("#file")!;
+const sourcePane = document.querySelector<HTMLElement>("#source-pane")!;
+const resultPane = document.querySelector<HTMLElement>("#result-pane")!;
 
 let lang: LangId = "c";
 let direction: Direction = "to-host";
 let resultText = "";
+let sourceName = "program.sc";
+let downloadName = "program.c";
+let banner = "";
 
-const SPACED: Record<LangId, string> = {
-  c: "out.sc",
-  java: "Out.sjava",
-  javascript: "out.sjs",
-  pascal: "out.spas",
-  zig: "out.szig",
-  kotlin: "out.skt",
-};
+/** The page lays the whole buffer out in the browser. Larger files belong on the command. */
+const OPEN_LIMIT = 1_500_000;
 
 const C_PROGRAMS = [
   { id: "hello", label: "Hello", source: __HELLO__ },
@@ -47,14 +49,6 @@ const C_PROGRAMS = [
   { id: "list", label: "List", source: __LIST__ },
   { id: "classify", label: "Classify", source: __CLASSIFY__ },
 ];
-
-function spacedName(id: LangId): string {
-  return SPACED[id];
-}
-
-function fileName(): string {
-  return direction === "to-host" ? PROFILES[lang].filename : spacedName(lang);
-}
 
 function examplesFor(id: LangId) {
   return id === "c" ? [...C_PROGRAMS, ...PROFILES.c.examples] : PROFILES[id].examples;
@@ -101,8 +95,10 @@ function render(): void {
   const sourceLines = sourceEl.value.length === 0 ? [""] : sourceEl.value.split("\n");
   if (sourceLines.length > 1 && sourceLines[sourceLines.length - 1] === "") sourceLines.pop();
   gutter(sourceGutter, sourceLines.map((_, index) => index + 1));
-  lineCount.textContent = `${sourceLines.length} line${sourceLines.length === 1 ? "" : "s"}`;
-  sourceLabel.textContent = direction === "to-host" ? "Spaced source" : "Host source";
+  const sourceTitle = direction === "to-host" ? "Spaced source" : "Host source";
+  sourceLabel.textContent = sourceTitle;
+  sourcePane.setAttribute("aria-label", sourceTitle);
+  lineCount.textContent = `${sourceName} · ${sourceLines.length} line${sourceLines.length === 1 ? "" : "s"}`;
 
   const lines = result.lines.length > 0 ? result.lines : plainLines(result.code);
   const empty = result.code.length === 0;
@@ -126,14 +122,18 @@ function render(): void {
   );
   gutter(outGutter, lines.map((line) => line.sourceLine || 1));
   const insertions = lines.reduce((sum, line) => sum + line.segments.filter((segment) => segment.inserted && segment.text !== "").length, 0);
-  outName.textContent = direction === "to-host" ? "Host result" : "Spaced result";
+  const resultTitle = direction === "to-host" ? "Host result" : "Spaced result";
+  outName.textContent = resultTitle;
+  resultPane.setAttribute("aria-label", resultTitle);
+  const hostCode = direction === "to-host" ? result.code : sourceEl.value;
+  downloadName = outputName(sourceName, lang, direction === "to-host", hostCode);
   outMeta.replaceChildren();
   if (empty) {
     outMeta.textContent = "Empty";
   } else if (direction === "to-host") {
     outMeta.append(
       document.createTextNode(
-        `${fileName()} · ${lines.length} line${lines.length === 1 ? "" : "s"} · ${insertions} insertion${insertions === 1 ? "" : "s"}`,
+        `${downloadName} · ${lines.length} line${lines.length === 1 ? "" : "s"} · ${insertions} insertion${insertions === 1 ? "" : "s"}`,
       ),
     );
     const oxide = document.createElement("span");
@@ -141,11 +141,16 @@ function render(): void {
     oxide.textContent = " · oxide is new";
     outMeta.append(oxide);
   } else {
-    outMeta.textContent = `${fileName()} · ${lines.length} line${lines.length === 1 ? "" : "s"} · colons replace braces`;
+    outMeta.textContent = `${downloadName} · ${lines.length} line${lines.length === 1 ? "" : "s"} · colons replace braces`;
   }
 
   notesEl.replaceChildren();
-  if (result.notes.length === 0) {
+  if (banner) {
+    const item = document.createElement("p");
+    item.textContent = banner;
+    notesEl.append(item);
+  }
+  if (result.notes.length === 0 && !banner) {
     const none = document.createElement("p");
     none.textContent = direction === "to-host"
       ? "None. Labels, ternaries, and preprocessor lines were left alone."
@@ -187,7 +192,9 @@ function render(): void {
 function loadExample(id: string): void {
   const example = examplesFor(lang).find((item) => item.id === id) ?? examplesFor(lang)[0];
   if (!example) return;
+  banner = "";
   direction = "to-host";
+  sourceName = spacedExampleName(example.id, lang);
   sourceEl.value = example.source;
   paintPressed(document, "data-direction", direction);
   paintPressed(examplesEl, "data-example", example.id);
@@ -232,7 +239,11 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-d
   button.addEventListener("click", () => {
     const next = button.dataset.direction as Direction;
     if (next === direction) return;
-    sourceEl.value = convert(sourceEl.value).code;
+    const produced = convert(sourceEl.value);
+    const hostCode = direction === "to-host" ? produced.code : sourceEl.value;
+    sourceName = outputName(sourceName, lang, direction === "to-host", hostCode);
+    banner = "";
+    sourceEl.value = produced.code;
     direction = next;
     paintPressed(document, "data-direction", direction);
     paintPressed(examplesEl, "data-example", "");
@@ -249,8 +260,57 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-p
 }
 
 sourceEl.addEventListener("input", () => {
+  banner = "";
   paintPressed(examplesEl, "data-example", "");
   render();
+});
+
+async function takeFile(file: File): Promise<void> {
+  const named = classifyName(file.name);
+  if (!named) {
+    banner = `Cannot tell the language of ${baseName(file.name)}. Use .c/.h/.sc, .java/.sjava, .js/.sjs, .pas/.spas, .zig/.szig, or .kt/.skt.`;
+    render();
+    return;
+  }
+  if (file.size > OPEN_LIMIT) {
+    banner = `${baseName(file.name)} is too large for this page.`;
+    render();
+    return;
+  }
+  banner = "";
+  lang = named.lang;
+  direction = named.host ? "to-spaced" : "to-host";
+  sourceName = baseName(file.name);
+  sourceEl.value = await file.text();
+  paintPressed(document, "data-direction", direction);
+  paintPressed(langsEl, "data-lang", lang);
+  drawExamples();
+  paintPressed(examplesEl, "data-example", "");
+  render();
+}
+
+openBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files?.[0];
+  fileInput.value = "";
+  if (file) void takeFile(file);
+});
+
+let dropTimer = 0;
+window.addEventListener("dragover", (event) => {
+  if (!event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  document.body.classList.add("is-drop");
+  window.clearTimeout(dropTimer);
+  dropTimer = window.setTimeout(() => document.body.classList.remove("is-drop"), 120);
+});
+window.addEventListener("drop", (event) => {
+  const file = event.dataTransfer?.files[0];
+  if (!file) return;
+  event.preventDefault();
+  window.clearTimeout(dropTimer);
+  document.body.classList.remove("is-drop");
+  void takeFile(file);
 });
 sourceEl.addEventListener("scroll", () => {
   sourceGutter.scrollTop = sourceEl.scrollTop;
@@ -276,7 +336,7 @@ saveBtn.addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = fileName();
+  link.download = downloadName;
   link.click();
   URL.revokeObjectURL(url);
 });
