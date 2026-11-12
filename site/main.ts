@@ -1,7 +1,7 @@
 import { layoutSource } from "../src/lib/layout/layout.ts";
 import { LANGS, PROFILES } from "../src/lib/layout/languages.ts";
 import { toSpaced } from "../src/lib/layout/spaced.ts";
-import type { LangId, LayoutNote } from "../src/lib/layout/types.ts";
+import type { LangId, LayoutEvent, LayoutNote, OutLine } from "../src/lib/layout/types.ts";
 
 declare const __HELLO__: string;
 declare const __POINT__: string;
@@ -9,25 +9,27 @@ declare const __FIZZBUZZ__: string;
 declare const __LIST__: string;
 declare const __CLASSIFY__: string;
 
-declare const __OFFSIDE_VERSION__: string;
-
 type Direction = "to-host" | "to-spaced";
+type Panel = "source" | "result" | "decisions";
 
 const sourceEl = document.querySelector<HTMLTextAreaElement>("#source")!;
+const sourceGutter = document.querySelector<HTMLElement>("#source-gutter")!;
 const outputEl = document.querySelector<HTMLElement>("#output")!;
+const outGutter = document.querySelector<HTMLElement>("#out-gutter")!;
 const notesEl = document.querySelector<HTMLElement>("#notes")!;
+const eventsEl = document.querySelector<HTMLElement>("#events")!;
 const langsEl = document.querySelector<HTMLElement>("#langs")!;
 const examplesEl = document.querySelector<HTMLElement>("#examples")!;
 const sourceLabel = document.querySelector<HTMLElement>("#source-label")!;
 const outName = document.querySelector<HTMLElement>("#out-name")!;
 const lineCount = document.querySelector<HTMLElement>("#line-count")!;
+const outMeta = document.querySelector<HTMLElement>("#out-meta")!;
 const copyBtn = document.querySelector<HTMLButtonElement>("#copy")!;
 const saveBtn = document.querySelector<HTMLButtonElement>("#save")!;
 
 let lang: LangId = "c";
 let direction: Direction = "to-host";
-
-document.querySelector(".kicker")!.textContent = `${__OFFSIDE_VERSION__} · layout pass, not a compiler`;
+let resultText = "";
 
 const SPACED: Record<LangId, string> = {
   c: "out.csp",
@@ -50,39 +52,124 @@ function spacedName(id: LangId): string {
   return SPACED[id];
 }
 
-function convert(text: string): { code: string; notes: LayoutNote[] } {
+function fileName(): string {
+  return direction === "to-host" ? PROFILES[lang].filename : spacedName(lang);
+}
+
+function examplesFor(id: LangId) {
+  return id === "c" ? [...C_PROGRAMS, ...PROFILES.c.examples] : PROFILES[id].examples;
+}
+
+function paintPressed(root: ParentNode, attr: string, value: string): void {
+  for (const button of root.querySelectorAll<HTMLButtonElement>(`button[${attr}]`)) {
+    const on = button.getAttribute(attr) === value;
+    button.setAttribute(attr === "data-panel" ? "aria-selected" : "aria-pressed", on ? "true" : "false");
+  }
+}
+
+function gutter(el: HTMLElement, numbers: number[]): void {
+  el.replaceChildren(
+    ...numbers.map((n) => {
+      const span = document.createElement("span");
+      span.className = "code-num";
+      span.textContent = String(n);
+      return span;
+    }),
+  );
+}
+
+function plainLines(code: string): OutLine[] {
+  const parts = code.length === 0 ? [""] : code.split("\n");
+  if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+  return parts.map((text, index) => ({ segments: [{ text, inserted: false }], sourceLine: index + 1 }));
+}
+
+function convert(text: string): { code: string; notes: LayoutNote[]; events: LayoutEvent[]; lines: OutLine[] } {
   try {
-    return direction === "to-host" ? layoutSource(text, lang) : toSpaced(text, lang);
+    if (direction === "to-host") return layoutSource(text, lang);
+    const spaced = toSpaced(text, lang);
+    return { code: spaced.code, notes: spaced.notes, events: [], lines: plainLines(spaced.code) };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { code: "", notes: [{ line: 1, message }] };
+    return { code: "", notes: [{ line: 1, message }], events: [], lines: [] };
   }
 }
 
 function render(): void {
   const result = convert(sourceEl.value);
-  outputEl.textContent = result.code;
-  notesEl.replaceChildren(
-    ...result.notes.map((note) => {
-      const item = document.createElement("li");
+  resultText = result.code;
+  const sourceLines = sourceEl.value.length === 0 ? [""] : sourceEl.value.split("\n");
+  if (sourceLines.length > 1 && sourceLines[sourceLines.length - 1] === "") sourceLines.pop();
+  gutter(sourceGutter, sourceLines.map((_, index) => index + 1));
+  lineCount.textContent = `${sourceLines.length} line${sourceLines.length === 1 ? "" : "s"}`;
+  sourceLabel.textContent = direction === "to-host" ? "Spaced source" : "Host source";
+
+  const lines = result.lines.length > 0 ? result.lines : plainLines(result.code);
+  outputEl.replaceChildren(
+    ...lines.map((line) => {
+      const row = document.createElement("span");
+      row.className = "code-line";
+      if (line.segments.length === 0) row.textContent = " ";
+      for (const segment of line.segments) {
+        if (!segment.inserted) {
+          row.append(segment.text);
+          continue;
+        }
+        const mark = document.createElement("span");
+        mark.className = "code-mark";
+        mark.textContent = segment.text;
+        row.append(mark);
+      }
+      return row;
+    }),
+  );
+  gutter(outGutter, lines.map((line) => line.sourceLine || 1));
+  const insertions = lines.reduce((sum, line) => sum + line.segments.filter((segment) => segment.inserted && segment.text !== "").length, 0);
+  outName.textContent = direction === "to-host" ? "Host result" : "Spaced result";
+  outMeta.replaceChildren(
+    document.createTextNode(`${fileName()} · ${lines.length} line${lines.length === 1 ? "" : "s"} · ${insertions} insertion${insertions === 1 ? "" : "s"}`),
+  );
+  if (insertions > 0) {
+    const oxide = document.createElement("span");
+    oxide.className = "oxide";
+    oxide.textContent = " · oxide is new";
+    outMeta.append(oxide);
+  }
+
+  notesEl.replaceChildren();
+  if (result.notes.length === 0) {
+    const none = document.createElement("p");
+    none.textContent = "None. Labels, ternaries, and preprocessor lines were left alone.";
+    notesEl.append(none);
+  } else {
+    for (const note of result.notes) {
+      const item = document.createElement("p");
       item.textContent = `${note.line}: ${note.message}`;
+      notesEl.append(item);
+    }
+  }
+  eventsEl.replaceChildren(
+    ...result.events.map((event) => {
+      const item = document.createElement("li");
+      const line = document.createElement("span");
+      line.className = "ln";
+      line.textContent = String(event.line);
+      const message = document.createElement("span");
+      message.textContent = event.message;
+      item.append(line, message);
       return item;
     }),
   );
-  const lines = sourceEl.value.length === 0 ? 1 : sourceEl.value.split("\n").length;
-  lineCount.textContent = `${lines} line${lines === 1 ? "" : "s"}`;
-  sourceLabel.textContent = direction === "to-host" ? "Spaced source" : "Host source";
-  outName.textContent = direction === "to-host" ? PROFILES[lang].filename : spacedName(lang);
-}
 
-function paintPressed(root: ParentNode, attr: string, value: string): void {
-  for (const button of root.querySelectorAll<HTMLButtonElement>(`button[${attr}]`)) {
-    button.setAttribute("aria-pressed", button.getAttribute(attr) === value ? "true" : "false");
-  }
+  const policy = PROFILES[lang].policy;
+  document.querySelector("#policy-cue")!.textContent = policy.cue;
+  document.querySelector("#policy-terminator")!.textContent = policy.terminator;
+  document.querySelector("#policy-close")!.textContent = policy.semiClose;
+  document.querySelector("#policy-through")!.textContent = policy.transparent;
 }
 
 function loadExample(id: string): void {
-  const example = PROFILES[lang].examples.find((item) => item.id === id) ?? PROFILES[lang].examples[0];
+  const example = examplesFor(lang).find((item) => item.id === id) ?? examplesFor(lang)[0];
   if (!example) return;
   direction = "to-host";
   sourceEl.value = example.source;
@@ -92,11 +179,11 @@ function loadExample(id: string): void {
 }
 
 function drawExamples(): void {
-  const examples = lang === "c" ? [...C_PROGRAMS, ...PROFILES.c.examples] : PROFILES[lang].examples;
   examplesEl.replaceChildren(
-    ...examples.map((example) => {
+    ...examplesFor(lang).map((example) => {
       const button = document.createElement("button");
       button.type = "button";
+      button.className = "plaque";
       button.dataset.example = example.id;
       button.textContent = example.label;
       button.addEventListener("click", () => loadExample(example.id));
@@ -110,6 +197,7 @@ function drawLangs(): void {
     ...LANGS.map((id) => {
       const button = document.createElement("button");
       button.type = "button";
+      button.className = "plaque";
       button.dataset.lang = id;
       button.textContent = PROFILES[id].label;
       button.setAttribute("aria-pressed", id === lang ? "true" : "false");
@@ -117,7 +205,7 @@ function drawLangs(): void {
         lang = id;
         paintPressed(langsEl, "data-lang", lang);
         drawExamples();
-        loadExample(PROFILES[lang].examples[0]?.id ?? "");
+        loadExample(examplesFor(lang)[0]?.id ?? "");
       });
       return button;
     }),
@@ -136,14 +224,28 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-d
   });
 }
 
+for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-panel]")) {
+  button.addEventListener("click", () => {
+    const panel = button.dataset.panel as Panel;
+    document.body.dataset.panel = panel;
+    paintPressed(document.querySelector(".tabs")!, "data-panel", panel);
+  });
+}
+
 sourceEl.addEventListener("input", () => {
   paintPressed(examplesEl, "data-example", "");
   render();
 });
+sourceEl.addEventListener("scroll", () => {
+  sourceGutter.scrollTop = sourceEl.scrollTop;
+});
+outputEl.addEventListener("scroll", () => {
+  outGutter.scrollTop = outputEl.scrollTop;
+});
 
 copyBtn.addEventListener("click", async () => {
   try {
-    await navigator.clipboard.writeText(outputEl.textContent ?? "");
+    await navigator.clipboard.writeText(resultText);
     copyBtn.textContent = "Copied";
   } catch {
     copyBtn.textContent = "Copy failed";
@@ -154,11 +256,11 @@ copyBtn.addEventListener("click", async () => {
 });
 
 saveBtn.addEventListener("click", () => {
-  const blob = new Blob([outputEl.textContent ?? ""], { type: "text/plain;charset=utf-8" });
+  const blob = new Blob([resultText], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = outName.textContent ?? "out.txt";
+  link.download = fileName();
   link.click();
   URL.revokeObjectURL(url);
 });

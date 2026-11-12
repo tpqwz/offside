@@ -3,61 +3,118 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>offside</title>
+    <title>Offside</title>
     <meta
       name="description"
-      content="Alpha. A spaced dialect of C, Java, JavaScript, Pascal, Zig, and Kotlin. This page runs the converter. It does not compile."
+      content="A colon and an indent stand in for braces, or for begin and end in Pascal. Hosts: C, Pascal, Java, JavaScript, Zig, and Kotlin."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:wght@400;600&display=swap"
+      rel="stylesheet"
     />
     <link rel="stylesheet" href="./site.css" />
   </head>
-  <body>
-    <header class="top">
-      <div class="brand">
-        <p class="kicker">0.1.0-alpha.2 · layout pass, not a compiler</p>
-        <h1>offside</h1>
-      </div>
-      <p class="lede">
-        A colon and a deeper indent stand in for braces, or for <code>begin</code>/<code>end</code> in Pascal.
-        C, Java, JavaScript, Pascal, Zig, and Kotlin share that shape.
-        This page runs the converter from the repository. It does not compile.
-        The release packs are the native command.
-      </p>
-      <p class="links">
-        <a href="https://github.com/tpqwz/offside">Source</a>
-        <a href="https://github.com/tpqwz/offside/releases/tag/v0.1.0-alpha.2">Release</a>
-      </p>
-    </header>
-
-    <main>
-      <div class="bar" role="group" aria-label="Direction">
-        <button type="button" data-direction="to-host" aria-pressed="true">Spaced to host</button>
-        <button type="button" data-direction="to-spaced" aria-pressed="false">Host to spaced</button>
-      </div>
-      <div class="bar" id="langs" role="group" aria-label="Language"></div>
-      <div class="bar examples" id="examples" role="group" aria-label="Examples"></div>
-
-      <div class="grid">
-        <section>
-          <div class="pane-head">
-            <h2 id="source-label">Spaced source</h2>
-            <p id="line-count" class="meta"></p>
+  <body data-panel="source">
+    <div class="page">
+      <header class="top">
+        <div class="title-row">
+          <div>
+            <p class="kicker">Layout pass · not a compiler</p>
+            <h1>Offside</h1>
           </div>
-          <label class="sr" for="source">Source</label>
-          <textarea id="source" spellcheck="false"></textarea>
-        </section>
-        <section>
-          <div class="pane-head">
-            <h2 id="out-name">out.c</h2>
-            <div class="actions">
-              <button type="button" id="copy">Copy</button>
-              <button type="button" id="save">Save</button>
+          <p class="lede">
+            A colon and an indent stand in for braces, or for begin and end in Pascal. Hosts: C, Pascal, Java,
+            JavaScript, Zig, and Kotlin.
+          </p>
+        </div>
+        <p class="links">
+          <a href="https://github.com/tpqwz/offside">Source</a>
+          <a href="https://github.com/tpqwz/offside/releases/tag/v0.1.0-alpha.2">Release</a>
+        </p>
+        <div class="bar" role="group" aria-label="Direction">
+          <button type="button" class="plaque" data-direction="to-host" aria-pressed="true">Spaced to host</button>
+          <button type="button" class="plaque" data-direction="to-spaced" aria-pressed="false">Host to spaced</button>
+        </div>
+        <div class="bar" id="langs" role="group" aria-label="Language"></div>
+        <div class="bar examples" id="examples" role="group" aria-label="Examples"></div>
+        <dl class="policy">
+          <div class="ledger">
+            <dt>Cue</dt>
+            <dd id="policy-cue"></dd>
+          </div>
+          <div class="ledger">
+            <dt>Terminator</dt>
+            <dd id="policy-terminator"></dd>
+          </div>
+          <div class="ledger">
+            <dt>Close</dt>
+            <dd id="policy-close"></dd>
+          </div>
+          <div class="ledger">
+            <dt>Through</dt>
+            <dd id="policy-through"></dd>
+          </div>
+        </dl>
+        <div class="bar tabs" role="tablist" aria-label="Panels">
+          <button type="button" class="plaque" role="tab" data-panel="source" aria-selected="true">Source</button>
+          <button type="button" class="plaque" role="tab" data-panel="result" aria-selected="false">Result</button>
+          <button type="button" class="plaque" role="tab" data-panel="decisions" aria-selected="false">Decisions</button>
+        </div>
+      </header>
+
+      <main>
+        <div class="work">
+          <section class="ledger sheet" id="source-pane" aria-label="Spaced source">
+            <div class="sheet-bar">
+              <div>
+                <h2 class="sheet-kicker" id="source-label">Spaced source</h2>
+                <p class="sheet-meta" id="line-count"></p>
+              </div>
+            </div>
+            <div class="code-pair">
+              <div class="code-gutter" id="source-gutter" aria-hidden="true"></div>
+              <label class="sr" for="source">Source</label>
+              <textarea id="source" class="code-sheet" spellcheck="false"></textarea>
+            </div>
+          </section>
+
+          <section class="ledger sheet" id="result-pane" aria-label="Host result">
+            <div class="sheet-bar">
+              <div class="sheet-title">
+                <h2 class="sheet-kicker" id="out-name">Host result</h2>
+                <p class="sheet-meta" id="out-meta"></p>
+              </div>
+              <div class="actions">
+                <button type="button" class="plaque" id="copy">Copy</button>
+                <button type="button" class="plaque" id="save">Save</button>
+              </div>
+            </div>
+            <div class="code-pair">
+              <div class="code-gutter" id="out-gutter" aria-hidden="true"></div>
+              <div id="output" class="code-sheet"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="ledger decisions" id="decisions" aria-label="What the pass did">
+          <div class="sheet-bar">
+            <h2 class="sheet-kicker">What the pass did</h2>
+          </div>
+          <div class="decision-grid">
+            <div>
+              <h3>Notes</h3>
+              <div id="notes"></div>
+            </div>
+            <div>
+              <h3>Events</h3>
+              <ol id="events"></ol>
             </div>
           </div>
-          <pre id="output"></pre>
-          <ul id="notes"></ul>
         </section>
-      </div>
-    </main>
+      </main>
+    </div>
     <script type="module" src="./app.js"></script>
   </body>
 </html>
