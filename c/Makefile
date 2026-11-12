@@ -16,8 +16,13 @@ SRC := src/rt.c src/engine.c src/lang.c src/lex.c src/host.c src/layout.c src/pa
 BUILD := build
 OBJ := $(patsubst src/%.c,$(BUILD)/%.o,$(SRC))
 
-.PHONY: all clean
+.PHONY: all clean cite
 all: $(BUILD)/offside
+
+cite:
+	$(MAKE) -C ../cite
+	../cite/build/cite --self-test
+	../cite/build/cite src
 
 $(BUILD)/offside: $(OBJ)
 	$(CC) $(WARN) $(CFLAGS) -o $@ $(OBJ) $(LDFLAGS)
