@@ -5,4 +5,5 @@ node_modules/
 *.compiled
 dist/
 c/build/
+examples/cli/build/
 /cite/
