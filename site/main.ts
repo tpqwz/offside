@@ -1,3 +1,4 @@
+import { highlight, type Hue } from "../src/lib/layout/highlight.ts";
 import { layoutSource } from "../src/lib/layout/layout.ts";
 import { LANGS, PROFILES } from "../src/lib/layout/languages.ts";
 import { baseName, classifyName, outputName, spacedExampleName } from "../src/lib/layout/names.ts";
@@ -14,6 +15,7 @@ type Direction = "to-host" | "to-spaced";
 type Panel = "source" | "result" | "decisions";
 
 const sourceEl = document.querySelector<HTMLTextAreaElement>("#source")!;
+const sourcePaint = document.querySelector<HTMLElement>("#source-paint")!;
 const sourceGutter = document.querySelector<HTMLElement>("#source-gutter")!;
 const outputEl = document.querySelector<HTMLElement>("#output")!;
 const outGutter = document.querySelector<HTMLElement>("#out-gutter")!;
@@ -61,6 +63,58 @@ function paintPressed(root: ParentNode, attr: string, value: string): void {
   }
 }
 
+function insertionRanges(lines: OutLine[]): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let offset = 0;
+  for (const line of lines) {
+    for (const segment of line.segments) {
+      if (segment.inserted && segment.text.length > 0) ranges.push([offset, offset + segment.text.length]);
+      offset += segment.text.length;
+    }
+    offset += 1;
+  }
+  return ranges;
+}
+
+function hueNode(hue: Hue): Node {
+  if (!hue.cls && !hue.inserted) return document.createTextNode(hue.text);
+  const span = document.createElement("span");
+  if (hue.inserted) span.classList.add("code-mark");
+  if (hue.cls) span.classList.add(hue.cls);
+  span.textContent = hue.text;
+  return span;
+}
+
+function paintSource(text: string): void {
+  const hues = highlight(text, PROFILES[lang]);
+  // A textarea shows a blank line after a final newline. A pre does not.
+  if (text.endsWith("\n")) hues.push({ text: "\n" });
+  sourcePaint.replaceChildren(...hues.map(hueNode));
+  sourcePaint.scrollTop = sourceEl.scrollTop;
+  sourcePaint.scrollLeft = sourceEl.scrollLeft;
+}
+
+function paintResult(text: string, lines: OutLine[]): void {
+  const rows: Hue[][] = [[]];
+  for (const hue of highlight(text, PROFILES[lang], insertionRanges(lines))) {
+    if (hue.text === "\n") {
+      rows.push([]);
+      continue;
+    }
+    rows[rows.length - 1]!.push(hue);
+  }
+  if (rows.length > 1 && rows[rows.length - 1]!.length === 0) rows.pop();
+  outputEl.replaceChildren(
+    ...rows.map((row) => {
+      const line = document.createElement("span");
+      line.className = "code-line";
+      if (row.length === 0) line.textContent = " ";
+      else line.append(...row.map(hueNode));
+      return line;
+    }),
+  );
+}
+
 function gutter(el: HTMLElement, numbers: number[]): void {
   el.replaceChildren(
     ...numbers.map((n) => {
@@ -95,6 +149,7 @@ function render(): void {
   const sourceLines = sourceEl.value.length === 0 ? [""] : sourceEl.value.split("\n");
   if (sourceLines.length > 1 && sourceLines[sourceLines.length - 1] === "") sourceLines.pop();
   gutter(sourceGutter, sourceLines.map((_, index) => index + 1));
+  paintSource(sourceEl.value);
   const sourceTitle = direction === "to-host" ? "Spaced source" : "Host source";
   sourceLabel.textContent = sourceTitle;
   sourcePane.setAttribute("aria-label", sourceTitle);
@@ -102,24 +157,7 @@ function render(): void {
 
   const lines = result.lines.length > 0 ? result.lines : plainLines(result.code);
   const empty = result.code.length === 0;
-  outputEl.replaceChildren(
-    ...lines.map((line) => {
-      const row = document.createElement("span");
-      row.className = "code-line";
-      if (line.segments.length === 0) row.textContent = " ";
-      for (const segment of line.segments) {
-        if (!segment.inserted) {
-          row.append(segment.text);
-          continue;
-        }
-        const mark = document.createElement("span");
-        mark.className = "code-mark";
-        mark.textContent = segment.text;
-        row.append(mark);
-      }
-      return row;
-    }),
-  );
+  paintResult(result.code, lines);
   gutter(outGutter, lines.map((line) => line.sourceLine || 1));
   const insertions = lines.reduce((sum, line) => sum + line.segments.filter((segment) => segment.inserted && segment.text !== "").length, 0);
   const resultTitle = direction === "to-host" ? "Host result" : "Spaced result";
@@ -314,6 +352,8 @@ window.addEventListener("drop", (event) => {
 });
 sourceEl.addEventListener("scroll", () => {
   sourceGutter.scrollTop = sourceEl.scrollTop;
+  sourcePaint.scrollTop = sourceEl.scrollTop;
+  sourcePaint.scrollLeft = sourceEl.scrollLeft;
 });
 outputEl.addEventListener("scroll", () => {
   outGutter.scrollTop = outputEl.scrollTop;
